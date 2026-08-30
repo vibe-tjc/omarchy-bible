@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.1.0). Leave empty to use the push tag."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      asset: ${{ steps.meta.outputs.asset }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Version from tag
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          case "$TAG" in
+            v*) VERSION="${TAG#v}" ;;
+            *) echo "Tag must look like v0.1.0, got: $TAG" >&2; exit 1 ;;
+          esac
+          ASSET="omarchy-bible-${VERSION}-x86_64.tar.gz"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+
+      - name: System libraries for GPUI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libvulkan-dev \
+            libfontconfig1-dev pkg-config cmake g++
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release -p omarchy-bible --locked
+
+      - name: Package
+        run: |
+          bash packaging/scripts/package-linux.sh \
+            "${{ steps.meta.outputs.version }}" \
+            target/release/omarchy-bible
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum "${{ steps.meta.outputs.asset }}" | tee SHA256SUMS
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist/${{ steps.meta.outputs.asset }}
+            dist/SHA256SUMS
+
+      - name: Fill AUR PKGBUILD
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          ASSET="${{ steps.meta.outputs.asset }}"
+          SHA="$(cut -d' ' -f1 dist/SHA256SUMS)"
+          mkdir -p dist/aur
+          sed \
+            -e "s/@PKGVER@/${VERSION}/g" \
+            -e "s/@SHA256@/${SHA}/g" \
+            packaging/omarchy-bible-bin/PKGBUILD.in \
+            > dist/aur/PKGBUILD
+          cat dist/aur/PKGBUILD
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aur-pkgbuild
+          path: dist/aur/PKGBUILD
+
+  aur:
+    needs: release
+    runs-on: ubuntu-22.04
+    if: ${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: aur-pkgbuild
+          path: aur
+
+      - name: Publish omarchy-bible-bin to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: omarchy-bible-bin
+          pkgbuild: aur/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update omarchy-bible-bin to ${{ needs.release.outputs.version }}
+          ssh_keyscan_types: rsa,ecdsa,ed25519

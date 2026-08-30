@@ -1,0 +1,24 @@
+# Maintainer: vibe-tjc <https://github.com/vibe-tjc>
+# This file is a template. The release workflow substitutes @PKGVER@ and @SHA256@.
+
+pkgname=omarchy-bible-bin
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc='Local-first bilingual Bible reader for Omarchy (CUV 1919 神版 + KJV)'
+arch=('x86_64')
+url='https://github.com/vibe-tjc/omarchy-bible'
+license=('Apache-2.0')
+depends=('libxkbcommon' 'wayland' 'vulkan-icd-loader' 'fontconfig')
+optdepends=('noto-fonts-cjk: Traditional Chinese glyphs')
+provides=('omarchy-bible')
+conflicts=('omarchy-bible')
+options=('!strip' '!debug')
+source=("${pkgname}-${pkgver}-x86_64.tar.gz::https://github.com/vibe-tjc/omarchy-bible/releases/download/v${pkgver}/omarchy-bible-${pkgver}-x86_64.tar.gz")
+sha256sums=('@SHA256@')
+
+package() {
+  cd "$srcdir"
+  install -Dm755 omarchy-bible "$pkgdir/usr/bin/omarchy-bible"
+  install -Dm644 omarchy-bible.desktop "$pkgdir/usr/share/applications/omarchy-bible.desktop"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

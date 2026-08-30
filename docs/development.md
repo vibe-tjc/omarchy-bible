@@ -78,3 +78,7 @@ resources/            .desktop 等包裝檔
 ## 之後再說
 
 閱讀歷史、WEB 或其他公有領域譯本、經授權後的 CUNP 經文包。
+
+## 套件
+
+Omarchy／Arch 發佈見 [packaging.md](packaging.md)。

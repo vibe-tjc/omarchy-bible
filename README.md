@@ -4,6 +4,24 @@ Omarchy 上的桌面聖經閱讀器：離線、中英對照、以閱讀為主。
 
 A local-first Bible reader for Omarchy. Traditional Chinese CUV 1919 神版 alongside the King James Version.
 
+## 安裝
+
+Omarchy／Arch 建議裝 AUR 的預編套件（上架後）：
+
+```bash
+yay -S omarchy-bible-bin
+```
+
+或從 [Releases](https://github.com/vibe-tjc/omarchy-bible/releases) 下載 `omarchy-bible-*-x86_64.tar.gz`。
+
+從原始碼跑：
+
+```bash
+cargo run -p omarchy-bible
+```
+
+套件格式與發佈流程見 [docs/packaging.md](docs/packaging.md)。開發細節見 [docs/development.md](docs/development.md)。
+
 ## 經文
 
 - 中文：**和合本 1919 神版**（公有領域）
@@ -32,13 +50,3 @@ A local-first Bible reader for Omarchy. Traditional Chinese CUV 1919 神版 alon
 
 **其他**
 - `Ctrl+Q` 離開
-
-## 執行
-
-需要已安裝 Rust 的 Linux 桌面（Omarchy／Arch 即可）：
-
-```bash
-cargo run -p omarchy-bible
-```
-
-開發、編譯、資料與授權細節見 [docs/development.md](docs/development.md)。
