@@ -2,13 +2,14 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build (e.g. v0.1.0). Leave empty to use the push tag."
-        required: false
-        default: ""
+        description: "Existing tag to build (e.g. v0.1.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -21,33 +22,33 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       asset: ${{ steps.meta.outputs.asset }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
-
       - name: Version from tag
         id: meta
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="${{ github.event.inputs.tag }}"
           else
-            TAG="${GITHUB_REF_NAME}"
+            TAG="${{ github.ref_name }}"
           fi
           case "$TAG" in
-            v*) VERSION="${TAG#v}" ;;
+            v*.*.*) VERSION="${TAG#v}" ;;
             *) echo "Tag must look like v0.1.0, got: $TAG" >&2; exit 1 ;;
           esac
-          ASSET="omarchy-bible-${VERSION}-x86_64.tar.gz"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "asset=omarchy-bible-${VERSION}-x86_64.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
 
       - name: System libraries for GPUI
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libxkbcommon-dev libwayland-dev libvulkan-dev \
-            libfontconfig1-dev pkg-config cmake g++
+            libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev \
+            libwayland-dev libvulkan-dev libfontconfig1-dev \
+            pkg-config cmake g++
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -79,7 +80,6 @@ jobs:
       - name: Fill AUR PKGBUILD
         run: |
           VERSION="${{ steps.meta.outputs.version }}"
-          ASSET="${{ steps.meta.outputs.asset }}"
           SHA="$(cut -d' ' -f1 dist/SHA256SUMS)"
           mkdir -p dist/aur
           sed \
@@ -87,7 +87,6 @@ jobs:
             -e "s/@SHA256@/${SHA}/g" \
             packaging/omarchy-bible-bin/PKGBUILD.in \
             > dist/aur/PKGBUILD
-          cat dist/aur/PKGBUILD
 
       - uses: actions/upload-artifact@v4
         with:
@@ -97,7 +96,6 @@ jobs:
   aur:
     needs: release
     runs-on: ubuntu-22.04
-    if: ${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -105,6 +103,7 @@ jobs:
           path: aur
 
       - name: Publish omarchy-bible-bin to AUR
+        if: ${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}
         uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
         with:
           pkgname: omarchy-bible-bin
