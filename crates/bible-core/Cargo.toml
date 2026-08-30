@@ -3,7 +3,7 @@ name = "bible-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Bible data model and public-domain Genesis 1 loader"
+description = "Bible data model, 66-book catalog, and CUV 神版 + KJV loader"
 publish = false
 
 [dependencies]
