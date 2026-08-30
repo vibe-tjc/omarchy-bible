@@ -1,0 +1,11 @@
+[package]
+name = "bible-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bible data model and public-domain Genesis 1 loader"
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

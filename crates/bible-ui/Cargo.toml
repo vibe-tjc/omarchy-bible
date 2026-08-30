@@ -1,0 +1,12 @@
+[package]
+name = "bible-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GPUI chapter view for omarchy-bible"
+publish = false
+
+[dependencies]
+bible-core.workspace = true
+gpui.workspace = true
+gpui-component.workspace = true

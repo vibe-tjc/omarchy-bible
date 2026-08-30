@@ -1,0 +1,15 @@
+[package]
+name = "omarchy-bible"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local-first bilingual Bible reader (GPUI)"
+publish = false
+
+[[bin]]
+name = "omarchy-bible"
+path = "src/main.rs"
+
+[dependencies]
+bible-core.workspace = true
+bible-ui.workspace = true

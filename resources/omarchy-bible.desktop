@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=聖經
+Name[en]=omarchy-bible
+Comment=本機中英對照聖經閱讀器（和合本 1919 + KJV）
+Comment[en]=Local bilingual Bible reader (CUV 1919 + KJV)
+Exec=omarchy-bible
+Icon=omarchy-bible
+Terminal=false
+Categories=Education;Office;Literature;
+Keywords=bible;聖經;KJV;和合本;
+StartupNotify=true
