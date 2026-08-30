@@ -1,66 +1,44 @@
-# omarchy-bible（聖經）
+# 聖經（omarchy-bible）
 
-本機優先的 GPUI 桌面經文閱讀器。側邊欄可選 66 卷，主畫面顯示**中英對照**、按節對齊。
+Omarchy 上的桌面聖經閱讀器：離線、中英對照、以閱讀為主。
 
-- 中文：**和合本 1919 神版**（公有領域；`上帝`→`神`）
+A local-first Bible reader for Omarchy. Traditional Chinese CUV 1919 神版 alongside the King James Version.
+
+## 經文
+
+- 中文：**和合本 1919 神版**（公有領域）
 - 英文：**King James Version**（公有領域）
-- 執行時不上網；經文嵌入二進位。
-- 側邊欄：舊約／新約全書卷，點選從第 1 章開啟。
-- 章節：上一章／下一章、章號列跳轉；快捷鍵 `[` `]`（卷首／卷尾可跨卷）。
-- `Ctrl+Q` 結束。
+- 全書 66 卷都在本機，開啟後不需要網路
+- **沒有**收錄《新標點和合本》（CUNP），該譯本仍受香港聖經公會／聯合聖經公會著作權保護
 
-A local-first GPUI desktop reader. Traditional Chinese CUV 1919 神版 over English KJV, with 66-book and chapter navigation. No network at runtime.
+## 功能
 
-## 如何執行 / How to run
+**閱讀**
+- 側邊欄依舊約／新約列出全書卷，點選從第 1 章開始
+- 章號列跳章；`[` `]` 上一章／下一章，到卷首卷尾會跨卷
+- **單語**或**對照**：單語可選和合本或 KJV；對照預設中文在上、英文在下。之後若再加譯本，對照可以一次看多個語系
 
-需要 Rust（已在 Arch／Omarchy 上以 rustup 安裝即可）：
+**搜尋**
+- 標題列「搜尋」，或按 `/`
+- 預設搜你正在看的譯本；也可以改搜全部譯本
+- 中文依原文片段（例如「神愛世人」），英文不區分大小寫
+- 點結果會跳到那一章並標出經節
+
+**設定**
+- 標題列「設定」
+- 主題：深色、淺色、跟隨系統
+- 字級：小／中／大，或逐步加減
+- `Esc` 先關搜尋，再關設定
+
+**其他**
+- `Ctrl+Q` 離開
+
+## 執行
+
+需要已安裝 Rust 的 Linux 桌面（Omarchy／Arch 即可）：
 
 ```bash
-cd /home/sy/Projects/omarchy-bible
 cargo run -p omarchy-bible
 ```
 
-測試與編譯：
-
-```bash
-cargo test
-cargo build -p omarchy-bible
-```
-
-Linux 編譯 GPUI 通常需要 Vulkan／Wayland 相關函式庫（多數 Omarchy 桌面已具備），例如：
-
-- `libxkbcommon`
-- `wayland`
-- Vulkan loader（`vulkan-icd-loader`）與可用的 ICD
-
-若 `cargo build` 因缺少系統套件失敗，用 `pacman -S` 安裝錯誤訊息中的套件即可。
-
-## 授權 / Licenses
-
-| 內容 | 授權 |
-|------|------|
-| 本專案程式碼 | [Apache-2.0](LICENSE) |
-| 和合本 1919（CUV）經文 | 公有領域 public domain |
-| King James Version（KJV）經文 | 公有領域 public domain |
-| **新標點和合本（CUNP）** | **未收錄**（香港聖經公會／聯合聖經公會著作權，HKBS／UBS） |
-
-Do **not** add CUNP / 新標點和合本 text to this repository.
-
-經文來源（建置時僅 curl 單檔，未 clone 整個 bible-data）：
-
-- https://raw.githubusercontent.com/midvash/bible-data/main/versions/zh/cuv/cuv.json
-- https://raw.githubusercontent.com/midvash/bible-data/main/versions/en/kjv/kjv.json
-
-## 專案結構
-
-```
-crates/bible-core     資料模型、66 卷目錄、章節載入、測試
-crates/bible-ui       GPUI：側邊欄 + 章節視圖
-crates/omarchy-bible  桌面程式進入點
-data/cuv-kjv.json     對齊後的全書（神版 + KJV，嵌入 bible-core）
-data/genesis-1.json   創世記 1 快照
-```
-
-## 範圍外（之後再說）
-
-搜尋、歷史、即時 Omarchy 主題、WEB／CUNP 經文包。
+開發、編譯、資料與授權細節見 [docs/development.md](docs/development.md)。

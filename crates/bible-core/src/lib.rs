@@ -4,7 +4,7 @@ mod catalog;
 
 pub use catalog::{BookMeta, CANON, Testament, lookup_canon};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Embedded verse-aligned Genesis 1 (CUV 1919 神版 + KJV). Public domain.
@@ -20,7 +20,10 @@ const BIBLE_JSON: &str = include_str!(concat!(
 ));
 
 /// Identifies a translation. Ships CUV 1919 神版 and KJV.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Additional translations later become new variants; UI lanes are keyed by this id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TranslationId {
     /// Chinese Union Version, 1919, 神版 (public domain).
     Cuv1919,
@@ -29,19 +32,141 @@ pub enum TranslationId {
 }
 
 impl TranslationId {
+    /// Translations bundled with this build, in default compare order (中 then 英).
+    pub const ALL: &'static [TranslationId] = &[TranslationId::Cuv1919, TranslationId::Kjv];
+
     pub fn label(self) -> &'static str {
         match self {
             TranslationId::Cuv1919 => "和合本 1919 神版",
             TranslationId::Kjv => "KJV",
         }
     }
+
+    /// CJK body text uses the Chinese font size; Latin uses a slightly smaller size.
+    pub fn is_cjk(self) -> bool {
+        matches!(self, TranslationId::Cuv1919)
+    }
 }
 
+/// How many translation lanes the reading pane shows.
+///
+/// `Compare` renders every id in the vec (1..=N, N>=2), so a third translation later
+/// is data + a checkbox, not a rewrite of the verse view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewMode {
+    Single(TranslationId),
+    Compare(Vec<TranslationId>),
+}
+
+impl Default for ViewMode {
+    fn default() -> Self {
+        Self::Compare(TranslationId::ALL.to_vec())
+    }
+}
+
+impl ViewMode {
+    pub fn single(id: TranslationId) -> Self {
+        Self::Single(id)
+    }
+
+    pub fn compare(ids: Vec<TranslationId>) -> Self {
+        Self::Compare(ids).sanitized()
+    }
+
+    /// Drop empty compare lists; a 1-item compare becomes single.
+    pub fn sanitized(self) -> Self {
+        match self {
+            ViewMode::Single(id) => ViewMode::Single(id),
+            ViewMode::Compare(ids) if ids.len() >= 2 => ViewMode::Compare(ids),
+            ViewMode::Compare(ids) if ids.len() == 1 => ViewMode::Single(ids[0]),
+            ViewMode::Compare(_) => ViewMode::default(),
+        }
+    }
+
+    pub fn lanes(&self) -> Vec<TranslationId> {
+        match self {
+            ViewMode::Single(id) => vec![*id],
+            ViewMode::Compare(ids) => ids.clone(),
+        }
+    }
+
+    pub fn lane_count(&self) -> usize {
+        self.lanes().len()
+    }
+
+    pub fn is_single(&self) -> bool {
+        matches!(self, ViewMode::Single(_))
+    }
+
+    pub fn is_compare(&self) -> bool {
+        matches!(self, ViewMode::Compare(_))
+    }
+
+    /// Header chrome, e.g. `和合本 1919 神版` or `和合本 1919 神版 · KJV`.
+    pub fn header_label(&self) -> String {
+        self.lanes()
+            .iter()
+            .map(|id| id.label())
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+}
+
+/// One verse: a number plus ordered translation lanes.
+///
+/// Loader still reads CUV+KJV internally; UI never assumes only chinese/english fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verse {
     pub number: u32,
-    pub chinese: String,
-    pub english: String,
+    pub texts: Vec<(TranslationId, String)>,
+}
+
+impl Verse {
+    pub fn bilingual(number: u32, chinese: impl Into<String>, english: impl Into<String>) -> Self {
+        Self {
+            number,
+            texts: vec![
+                (TranslationId::Cuv1919, chinese.into()),
+                (TranslationId::Kjv, english.into()),
+            ],
+        }
+    }
+
+    pub fn get(&self, id: TranslationId) -> Option<&str> {
+        self.texts
+            .iter()
+            .find(|(tid, _)| *tid == id)
+            .map(|(_, text)| text.as_str())
+    }
+
+    pub fn texts_for<'a>(&'a self, lanes: &[TranslationId]) -> Vec<(TranslationId, &'a str)> {
+        lanes
+            .iter()
+            .filter_map(|&id| self.get(id).map(|text| (id, text)))
+            .collect()
+    }
+}
+
+/// One verse hit from [`Bible::search`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchHit {
+    /// OSIS id, e.g. `"Gen"`, `"John"`.
+    pub book: String,
+    pub book_name_zh: String,
+    /// 0-based index in the loaded store (for `load_chapter_at`).
+    pub book_index: usize,
+    pub chapter: u32,
+    pub verse: u32,
+    pub translation: TranslationId,
+    /// Short excerpt of the matching lane, truncated with ellipsis.
+    pub snippet: String,
+}
+
+impl SearchHit {
+    pub fn ref_zh(&self) -> String {
+        format!("{} {}:{}", self.book_name_zh, self.chapter, self.verse)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,9 +176,22 @@ pub struct Chapter {
     pub book_name_zh: String,
     pub book_name_en: String,
     pub chapter: u32,
-    pub chinese_label: String,
-    pub english_label: String,
     pub verses: Vec<Verse>,
+}
+
+impl Chapter {
+    /// Unique translation ids present in this chapter, in first-seen order.
+    pub fn available_translations(&self) -> Vec<TranslationId> {
+        let mut ids = Vec::new();
+        for verse in &self.verses {
+            for (id, _) in &verse.texts {
+                if !ids.contains(id) {
+                    ids.push(*id);
+                }
+            }
+        }
+        ids
+    }
 }
 
 impl Chapter {
@@ -104,8 +242,10 @@ struct FileChapter {
     book_name_en: String,
     chapter: u32,
     #[serde(rename = "chineseLabel")]
+    #[allow(dead_code)]
     chinese_label: String,
     #[serde(rename = "englishLabel")]
+    #[allow(dead_code)]
     english_label: String,
     verses: Vec<FileVerse>,
 }
@@ -244,11 +384,110 @@ impl Bible {
             book_name_zh: meta.name_zh.to_string(),
             book_name_en: meta.name_en.to_string(),
             chapter,
-            chinese_label: TranslationId::Cuv1919.label().to_string(),
-            english_label: TranslationId::Kjv.label().to_string(),
             verses,
         })
     }
+
+    /// In-memory substring search over the given translation lanes.
+    ///
+    /// - Empty / whitespace-only queries return no hits (query is trimmed).
+    /// - CJK lanes (`TranslationId::is_cjk`): exact substring.
+    /// - Other lanes: case-insensitive substring.
+    /// - One hit per verse (first matching lane in `lanes` order).
+    pub fn search(&self, query: &str, lanes: &[TranslationId]) -> Vec<SearchHit> {
+        let query = query.trim();
+        if query.is_empty() || lanes.is_empty() {
+            return Vec::new();
+        }
+
+        let mut unique_lanes = Vec::new();
+        for &id in lanes {
+            if !unique_lanes.contains(&id) {
+                unique_lanes.push(id);
+            }
+        }
+
+        let mut hits = Vec::new();
+        for book in &self.books {
+            let meta = book.entry.meta;
+            for (ch_idx, verses) in book.chapters.iter().enumerate() {
+                let chapter = (ch_idx as u32) + 1;
+                for verse in verses {
+                    for &lane in &unique_lanes {
+                        let Some(text) = verse.get(lane) else {
+                            continue;
+                        };
+                        if !text_matches(text, query, lane) {
+                            continue;
+                        }
+                        hits.push(SearchHit {
+                            book: meta.osis.to_string(),
+                            book_name_zh: meta.name_zh.to_string(),
+                            book_index: book.entry.index,
+                            chapter,
+                            verse: verse.number,
+                            translation: lane,
+                            snippet: make_snippet(text, query, lane),
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+        hits
+    }
+}
+
+fn text_matches(text: &str, query: &str, lane: TranslationId) -> bool {
+    if lane.is_cjk() {
+        text.contains(query)
+    } else {
+        contains_ignore_case(text, query)
+    }
+}
+
+fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
+    haystack.to_lowercase().contains(&needle.to_lowercase())
+}
+
+fn find_match_byte(text: &str, query: &str, cjk: bool) -> Option<usize> {
+    if cjk {
+        text.find(query)
+    } else {
+        // KJV is ASCII; lowercasing preserves byte offsets.
+        text.to_lowercase().find(&query.to_lowercase())
+    }
+}
+
+fn make_snippet(text: &str, query: &str, lane: TranslationId) -> String {
+    let cjk = lane.is_cjk();
+    let context = if cjk { 12 } else { 24 };
+    let chars: Vec<char> = text.chars().collect();
+    let Some(byte_idx) = find_match_byte(text, query, cjk) else {
+        return truncate_chars(&chars, 40);
+    };
+    let match_char = text[..byte_idx.min(text.len())].chars().count();
+    let q_len = query.chars().count().max(1);
+    let start = match_char.saturating_sub(context);
+    let end = (match_char + q_len + context).min(chars.len());
+    let mut out = String::new();
+    if start > 0 {
+        out.push('…');
+    }
+    out.extend(chars[start..end].iter());
+    if end < chars.len() {
+        out.push('…');
+    }
+    out
+}
+
+fn truncate_chars(chars: &[char], max: usize) -> String {
+    if chars.len() <= max {
+        return chars.iter().collect();
+    }
+    let mut out: String = chars[..max].iter().collect();
+    out.push('…');
+    out
 }
 
 /// Load the embedded 66-book CUV 神版 + KJV store.
@@ -277,8 +516,7 @@ pub fn load_bible() -> Result<Bible, LoadError> {
                 ch.v.into_iter()
                     .map(|v| Verse {
                         number: v.n,
-                        chinese: v.zh,
-                        english: v.en,
+                        texts: vec![(TranslationId::Cuv1919, v.zh), (TranslationId::Kjv, v.en)],
                     })
                     .collect();
         }
@@ -341,11 +579,11 @@ pub fn align_chapter(
         .verses
         .iter()
         .filter_map(|v| {
-            Some(Verse {
-                number: v.number,
-                chinese: v.text.replace("上帝", "神"),
-                english: en_map.get(&v.number)?.to_string(),
-            })
+            Some(Verse::bilingual(
+                v.number,
+                v.text.replace("上帝", "神"),
+                en_map.get(&v.number)?.to_string(),
+            ))
         })
         .collect();
 
@@ -364,8 +602,6 @@ pub fn align_chapter(
             .map(|m| m.name_en.to_string())
             .unwrap_or_else(|| chinese.english_name.clone()),
         chapter,
-        chinese_label: TranslationId::Cuv1919.label().to_string(),
-        english_label: TranslationId::Kjv.label().to_string(),
         verses,
     })
 }
@@ -381,16 +617,10 @@ fn load_aligned_json(json: &str) -> Result<Chapter, LoadError> {
         book_name_zh: file.book_name_zh,
         book_name_en: file.book_name_en,
         chapter: file.chapter,
-        chinese_label: file.chinese_label,
-        english_label: file.english_label,
         verses: file
             .verses
             .into_iter()
-            .map(|v| Verse {
-                number: v.number,
-                chinese: v.zh,
-                english: v.en,
-            })
+            .map(|v| Verse::bilingual(v.number, v.zh, v.en))
             .collect(),
     })
 }
@@ -406,31 +636,40 @@ mod tests {
         assert_eq!(chapter.verses.len(), 31, "Genesis 1 has 31 verses");
         let v1 = &chapter.verses[0];
         assert_eq!(v1.number, 1);
-        assert_eq!(v1.chinese, "起初，神創造天地。");
+        assert_eq!(v1.get(TranslationId::Cuv1919), Some("起初，神創造天地。"));
+        assert_eq!(v1.texts.len(), 2, "embedded verses expose CUV + KJV lanes");
         assert!(
-            v1.chinese.starts_with("起初，神"),
+            v1.get(TranslationId::Cuv1919)
+                .unwrap()
+                .starts_with("起初，神"),
             "CUV 神版 1:1 should start with 起初，神, got {:?}",
-            v1.chinese
+            v1.get(TranslationId::Cuv1919)
         );
         assert!(
-            v1.english.contains("In the beginning"),
+            v1.get(TranslationId::Kjv)
+                .unwrap()
+                .contains("In the beginning"),
             "KJV 1:1 should contain 'In the beginning', got {:?}",
-            v1.english
+            v1.get(TranslationId::Kjv)
         );
         for (i, verse) in chapter.verses.iter().enumerate() {
             assert_eq!(verse.number, (i as u32) + 1);
-            assert!(!verse.chinese.is_empty());
-            assert!(!verse.english.is_empty());
+            let zh = verse.get(TranslationId::Cuv1919).unwrap_or("");
+            let en = verse.get(TranslationId::Kjv).unwrap_or("");
+            assert!(!zh.is_empty());
+            assert!(!en.is_empty());
             assert!(
-                !verse.chinese.contains("上帝"),
+                !zh.contains("上帝"),
                 "no 上帝 in Chinese scripture: {}:{} {:?}",
                 chapter.chapter,
                 verse.number,
-                verse.chinese
+                zh
             );
         }
-        assert_eq!(chapter.chinese_label, "和合本 1919 神版");
-        assert_eq!(chapter.english_label, "KJV");
+        assert_eq!(
+            chapter.available_translations(),
+            vec![TranslationId::Cuv1919, TranslationId::Kjv]
+        );
     }
 
     #[test]
@@ -466,7 +705,9 @@ mod tests {
         assert!(!john.verses.is_empty());
         assert!(john.verses.iter().any(|v| v.number == 16));
         assert!(
-            john.verses.iter().all(|v| !v.chinese.contains("上帝")),
+            john.verses
+                .iter()
+                .all(|v| { !v.get(TranslationId::Cuv1919).unwrap_or("").contains("上帝") }),
             "no 上帝 in John 3"
         );
 
@@ -490,12 +731,172 @@ mod tests {
             .expect("Gen 1 from store");
         let from_helper = load_genesis_1().unwrap();
         assert_eq!(from_store.verses.len(), from_helper.verses.len());
-        assert_eq!(from_store.verses[0].chinese, from_helper.verses[0].chinese);
-        assert_eq!(from_store.chinese_label, "和合本 1919 神版");
+        assert_eq!(
+            from_store.verses[0].get(TranslationId::Cuv1919),
+            from_helper.verses[0].get(TranslationId::Cuv1919)
+        );
+        assert_eq!(
+            from_store.available_translations()[0].label(),
+            "和合本 1919 神版"
+        );
     }
 
     #[test]
     fn cuv1919_label_is_shen_edition() {
         assert_eq!(TranslationId::Cuv1919.label(), "和合本 1919 神版");
+    }
+
+    #[test]
+    fn view_mode_single_has_one_lane() {
+        let mode = ViewMode::single(TranslationId::Cuv1919);
+        assert_eq!(mode.lane_count(), 1);
+        assert_eq!(mode.lanes(), vec![TranslationId::Cuv1919]);
+        assert!(mode.is_single());
+        assert_eq!(mode.header_label(), "和合本 1919 神版");
+
+        let kjv = ViewMode::single(TranslationId::Kjv);
+        assert_eq!(kjv.lane_count(), 1);
+        assert_eq!(kjv.header_label(), "KJV");
+    }
+
+    #[test]
+    fn view_mode_compare_renders_n_lanes() {
+        let two = ViewMode::compare(vec![TranslationId::Cuv1919, TranslationId::Kjv]);
+        assert_eq!(two.lane_count(), 2);
+        assert!(two.is_compare());
+        assert_eq!(two.header_label(), "和合本 1919 神版 · KJV");
+
+        // A third id is just another lane — UI iterates this vec.
+        let three = ViewMode::Compare(vec![
+            TranslationId::Cuv1919,
+            TranslationId::Kjv,
+            TranslationId::Cuv1919,
+        ]);
+        assert_eq!(three.lane_count(), 3);
+
+        assert_eq!(
+            ViewMode::compare(vec![]).lane_count(),
+            2,
+            "empty compare sanitizes to default"
+        );
+        assert!(ViewMode::compare(vec![TranslationId::Kjv]).is_single());
+    }
+
+    #[test]
+    fn view_mode_serde_roundtrip() {
+        let single = ViewMode::single(TranslationId::Kjv);
+        let json = serde_json::to_string(&single).unwrap();
+        assert!(json.contains("kjv"), "{json}");
+        let back: ViewMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, single);
+
+        let compare = ViewMode::default();
+        let json = serde_json::to_string(&compare).unwrap();
+        let back: ViewMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.lanes(), compare.lanes());
+    }
+
+    #[test]
+    fn search_qichu_finds_genesis_1_1_cuv() {
+        let bible = load_bible().expect("embedded bible");
+        let hits = bible.search("起初", &[TranslationId::Cuv1919]);
+        assert!(
+            hits.iter().any(|h| {
+                h.book == "Gen"
+                    && h.book_name_zh == "創世記"
+                    && h.chapter == 1
+                    && h.verse == 1
+                    && h.translation == TranslationId::Cuv1919
+            }),
+            "expected 創世記 1:1 CUV in {hits:?}"
+        );
+        assert!(
+            hits[0].snippet.contains("起初"),
+            "snippet should include the query, got {:?}",
+            hits[0].snippet
+        );
+        assert!(
+            bible.search("起初", &[TranslationId::Kjv]).is_empty(),
+            "KJV lane should not match CJK substring"
+        );
+    }
+
+    #[test]
+    fn search_in_the_beginning_any_case_finds_genesis_1_1_kjv() {
+        let bible = load_bible().expect("embedded bible");
+        for q in ["In the beginning", "in the beginning", "IN THE BEGINNING"] {
+            let hits = bible.search(q, &[TranslationId::Kjv]);
+            assert!(
+                hits.iter().any(|h| {
+                    h.book == "Gen"
+                        && h.chapter == 1
+                        && h.verse == 1
+                        && h.translation == TranslationId::Kjv
+                }),
+                "expected Gen 1:1 KJV for {q:?}, got {hits:?}"
+            );
+        }
+        let both = bible.search("In the beginning", TranslationId::ALL);
+        assert!(
+            both.iter()
+                .any(|h| h.book == "Gen" && h.chapter == 1 && h.verse == 1)
+        );
+    }
+
+    #[test]
+    fn search_god_so_loved_finds_john_3_16_kjv() {
+        let bible = load_bible().expect("embedded bible");
+        let hits = bible.search("God so loved", &[TranslationId::Kjv]);
+        assert!(
+            hits.iter()
+                .any(|h| h.book == "John" && h.chapter == 3 && h.verse == 16),
+            "{hits:?}"
+        );
+    }
+
+    #[test]
+    fn search_shen_ai_shi_ren_finds_john_3_16_cuv() {
+        let bible = load_bible().expect("embedded bible");
+        let hits = bible.search("神愛世人", &[TranslationId::Cuv1919]);
+        assert!(
+            hits.iter().any(|h| {
+                h.book == "John"
+                    && h.book_name_zh == "約翰福音"
+                    && h.chapter == 3
+                    && h.verse == 16
+                    && h.translation == TranslationId::Cuv1919
+            }),
+            "expected 約翰福音 3:16 CUV in {hits:?}"
+        );
+        assert_eq!(hits[0].ref_zh(), "約翰福音 3:16");
+    }
+
+    #[test]
+    fn search_empty_query_returns_no_hits() {
+        let bible = load_bible().expect("embedded bible");
+        assert!(bible.search("", TranslationId::ALL).is_empty());
+        assert!(bible.search("   ", TranslationId::ALL).is_empty());
+        assert!(bible.search("\t\n", TranslationId::ALL).is_empty());
+    }
+
+    #[test]
+    fn search_does_not_introduce_shangdi() {
+        let bible = load_bible().expect("embedded bible");
+        let hits = bible.search("神", &[TranslationId::Cuv1919]);
+        assert!(!hits.is_empty());
+        for hit in &hits {
+            assert!(
+                !hit.snippet.contains("上帝"),
+                "no 上帝 in search snippet: {} {:?}",
+                hit.ref_zh(),
+                hit.snippet
+            );
+        }
+        let john = bible.load_chapter("John", 3).unwrap();
+        assert!(
+            john.verses
+                .iter()
+                .all(|v| !v.get(TranslationId::Cuv1919).unwrap_or("").contains("上帝"))
+        );
     }
 }
