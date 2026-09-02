@@ -10,7 +10,12 @@ AUR 上架之後：
 yay -S omarchy-bible-bin
 ```
 
-或從 GitHub Release 下載 `omarchy-bible-VERSION-x86_64.tar.gz`，把 `omarchy-bible` 放到 `PATH`。
+或從 GitHub Release 下載：
+
+- Linux：`omarchy-bible-VERSION-x86_64.tar.gz`（binary + `.desktop` + `LICENSE`）
+- macOS Apple Silicon：`omarchy-bible-VERSION-macos-arm64.tar.gz`（binary + `LICENSE`）
+
+把 `omarchy-bible` 放到 `PATH`。`.desktop` 只給 Linux 包裝用。
 
 ## 發一版
 
@@ -18,15 +23,15 @@ yay -S omarchy-bible-bin
 2. 打 tag 並推送（會觸發 [Release](../.github/workflows/release.yml)）：
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 3. Action 會：
-   - 在 Ubuntu 22.04 編 `cargo build --release -p omarchy-bible`（glibc 比 Arch 舊，Arch 上跑沒問題）
-   - 打包 binary + `.desktop` + `LICENSE` 成 tarball
-   - 開 GitHub Release 並附 SHA256
-   - 若 repo 有設 AUR secrets，再更新 AUR 的 `omarchy-bible-bin`
+   - 在 Ubuntu 22.04 編 `cargo build --release -p omarchy-bible`（glibc 比 Arch 舊，Arch 上跑沒問題），以 `packaging/scripts/package-linux.sh` 打成 `omarchy-bible-VERSION-x86_64.tar.gz`
+   - 在 `macos-latest`（arm64）編同一指令，以 `packaging/scripts/package-macos.sh` 打成 `omarchy-bible-VERSION-macos-arm64.tar.gz`
+   - 兩個 job 把資產附到同一個 GitHub Release（Linux 另附 `SHA256SUMS`，macOS 另附 `SHA256SUMS-macos-arm64`）
+   - 若 repo 有設 AUR secrets，再更新 AUR 的 `omarchy-bible-bin`（僅 Linux 資產）
 
 手動重跑：Actions → Release → Run workflow。
 
@@ -45,8 +50,8 @@ git push origin v0.1.0
 本機預覽 PKGBUILD：
 
 ```bash
-# 先有 dist/omarchy-bible-0.1.0-x86_64.tar.gz 與 SHA
-VERSION=0.1.0
+# 先有 dist/omarchy-bible-0.2.0-x86_64.tar.gz 與 SHA
+VERSION=0.2.0
 SHA=$(sha256sum dist/omarchy-bible-${VERSION}-x86_64.tar.gz | cut -d' ' -f1)
 sed -e "s/@PKGVER@/${VERSION}/g" -e "s/@SHA256@/${SHA}/g" \
   packaging/omarchy-bible-bin/PKGBUILD.in
@@ -54,4 +59,6 @@ sed -e "s/@PKGVER@/${VERSION}/g" -e "s/@SHA256@/${SHA}/g" \
 
 ## 執行期依賴
 
-`libxkbcommon`、`wayland`、`vulkan-icd-loader`、`fontconfig`。中文字型建議 `noto-fonts-cjk`（optdepends）。
+Linux：`libxkbcommon`、`wayland`、`vulkan-icd-loader`、`fontconfig`。中文字型建議 `noto-fonts-cjk`（optdepends）。
+
+macOS：系統已有 PingFang TC / Songti TC / Heiti TC；無需 Extra apt／Homebrew 套件即可編。設定檔在 `~/Library/Application Support/omarchy-bible/settings.json`。

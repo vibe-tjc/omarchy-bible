@@ -12,9 +12,9 @@ Omarchy／Arch 建議裝 AUR 的預編套件（上架後）：
 yay -S omarchy-bible-bin
 ```
 
-或從 [Releases](https://github.com/vibe-tjc/omarchy-bible/releases) 下載 `omarchy-bible-*-x86_64.tar.gz`。
+或從 [Releases](https://github.com/vibe-tjc/omarchy-bible/releases) 下載 Linux 的 `omarchy-bible-*-x86_64.tar.gz`，或 macOS（Apple Silicon）的 `omarchy-bible-*-macos-arm64.tar.gz`。
 
-從原始碼跑：
+從原始碼跑（Linux 與 macOS）：
 
 ```bash
 cargo run -p omarchy-bible
@@ -49,4 +49,4 @@ cargo run -p omarchy-bible
 - `Esc` 先關搜尋，再關設定
 
 **其他**
-- `Ctrl+Q` 離開
+- `Ctrl+Q` 或 `Cmd+Q` 離開

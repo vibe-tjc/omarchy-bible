@@ -2,17 +2,18 @@
 
 mod settings;
 
-use bible_core::{Bible, BookEntry, Chapter, SearchHit, Testament, TranslationId, ViewMode};
+use bible_core::{Bible, BookEntry, Chapter, SearchHit, Testament, TranslationId, ViewMode, format_ref_zh, format_verse_copy};
 use gpui::{
-    App, Application, Bounds, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight,
-    KeyBinding, MouseButton, ScrollHandle, SharedString, Subscription, Timer, TitlebarOptions,
-    Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, rgba, size,
+    App, Application, Bounds, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable,
+    FontWeight, KeyBinding, MouseButton, ScrollHandle, SharedString, Subscription, Timer,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, rgba,
+    size,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Root, Theme, ThemeMode, h_flex, v_flex};
 use settings::{
     AppSettings, FONT_LARGE, FONT_MEDIUM, FONT_SMALL, Palette, ResolvedTheme, ThemePreference,
-    omarchy_stamp, resolve_theme,
+    omarchy_stamp, resolve_theme, settings_location_note_zh,
 };
 use std::time::Duration;
 
@@ -24,13 +25,28 @@ actions!(
         NextChapter,
         ToggleSettings,
         CloseSettings,
-        OpenSearch
+        OpenSearch,
+        ToggleSelectMode
     ]
 );
 
 const SEARCH_DEBOUNCE_MS: u64 = 180;
 const SEARCH_DISPLAY_CAP: usize = 80;
 
+#[cfg(target_os = "macos")]
+const CJK_FONT_CANDIDATES: &[&str] = &[
+    "PingFang TC",
+    "Songti TC",
+    "Heiti TC",
+    "Noto Serif CJK TC",
+    "Noto Sans CJK TC",
+    "Source Han Serif TC",
+    "Source Han Sans TC",
+    "Noto Serif CJK",
+    "Noto Sans CJK",
+];
+
+#[cfg(not(target_os = "macos"))]
 const CJK_FONT_CANDIDATES: &[&str] = &[
     "Noto Serif CJK TC",
     "Noto Sans CJK TC",
@@ -110,7 +126,12 @@ fn pick_cjk_font(cx: &App) -> SharedString {
         }
     }
     for installed_name in &installed {
-        if installed_name.contains("CJK TC") || installed_name.contains("Noto Serif CJK") {
+        if installed_name.contains("CJK TC")
+            || installed_name.contains("Noto Serif CJK")
+            || installed_name.contains("PingFang")
+            || installed_name.contains("Songti TC")
+            || installed_name.contains("Heiti TC")
+        {
             return SharedString::from(installed_name.clone());
         }
     }
@@ -134,6 +155,8 @@ pub struct BibleView {
     highlight_verse: Option<u32>,
     pending_scroll_verse: Option<u32>,
     chapter_scroll: ScrollHandle,
+    select_mode: bool,
+    selected_verses: Vec<u32>,
     resolved: ResolvedTheme,
     omarchy_stamp: Option<u128>,
     _subscriptions: Vec<Subscription>,
@@ -209,6 +232,8 @@ impl BibleView {
             highlight_verse: None,
             pending_scroll_verse: None,
             chapter_scroll: ScrollHandle::new(),
+            select_mode: false,
+            selected_verses: Vec::new(),
             resolved,
             omarchy_stamp: omarchy_stamp(),
             _subscriptions: subscriptions,
@@ -281,6 +306,7 @@ impl BibleView {
             self.chapter = loaded;
             self.highlight_verse = highlight;
             self.pending_scroll_verse = highlight;
+            self.selected_verses.clear();
             cx.notify();
         }
     }
@@ -338,6 +364,10 @@ impl BibleView {
     }
 
     fn close_settings(&mut self, _: &CloseSettings, window: &mut Window, cx: &mut Context<Self>) {
+        if self.select_mode {
+            self.exit_select_mode(cx);
+            return;
+        }
         if self.search_open {
             self.close_search(window, cx);
             return;
@@ -347,6 +377,66 @@ impl BibleView {
             window.focus(&self.focus_handle);
             cx.notify();
         }
+    }
+
+    fn toggle_select_mode_action(
+        &mut self,
+        _: &ToggleSelectMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_select_mode(cx);
+    }
+
+    fn toggle_select_mode(&mut self, cx: &mut Context<Self>) {
+        if self.select_mode {
+            self.exit_select_mode(cx);
+        } else {
+            self.select_mode = true;
+            self.selected_verses.clear();
+            cx.notify();
+        }
+    }
+
+    fn exit_select_mode(&mut self, cx: &mut Context<Self>) {
+        self.select_mode = false;
+        self.selected_verses.clear();
+        cx.notify();
+    }
+
+    fn on_verse_select(&mut self, number: u32, cx: &mut Context<Self>) {
+        if !self.select_mode {
+            return;
+        }
+        match self.selected_verses.as_slice() {
+            [] => self.selected_verses.push(number),
+            [only] if *only == number => self.selected_verses.clear(),
+            [only] => {
+                let a = *only;
+                let (lo, hi) = if a <= number { (a, number) } else { (number, a) };
+                self.selected_verses = self
+                    .chapter
+                    .verses
+                    .iter()
+                    .map(|v| v.number)
+                    .filter(|n| *n >= lo && *n <= hi)
+                    .collect();
+            }
+            _ => {
+                self.selected_verses.clear();
+                self.selected_verses.push(number);
+            }
+        }
+        cx.notify();
+    }
+
+    fn copy_selection(&mut self, cx: &mut Context<Self>) {
+        if self.selected_verses.is_empty() {
+            return;
+        }
+        let lanes = self.settings.view_mode.lanes();
+        let text = format_verse_copy(&self.chapter, &self.selected_verses, &lanes);
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
     fn open_search_action(&mut self, _: &OpenSearch, window: &mut Window, cx: &mut Context<Self>) {
@@ -516,6 +606,7 @@ impl Render for BibleView {
             .on_action(cx.listener(Self::toggle_settings))
             .on_action(cx.listener(Self::close_settings))
             .on_action(cx.listener(Self::open_search_action))
+            .on_action(cx.listener(Self::toggle_select_mode_action))
             .size_full()
             .bg(rgb(palette.bg))
             .text_color(rgb(palette.fg))
@@ -627,11 +718,15 @@ impl BibleView {
         let en = self.settings.english_px();
         let num = self.settings.number_px();
         let highlight = self.highlight_verse;
+        let select_mode = self.select_mode;
+        let selected = self.selected_verses.clone();
         let verses: Vec<gpui::AnyElement> = self
             .chapter
             .verses
             .iter()
             .map(|verse| {
+                let n = verse.number;
+                let is_sel = selected.contains(&n);
                 verse_block(
                     verse,
                     &lanes,
@@ -639,7 +734,12 @@ impl BibleView {
                     zh,
                     en,
                     num,
-                    highlight == Some(verse.number),
+                    highlight == Some(n),
+                    select_mode,
+                    is_sel,
+                    cx.listener(move |this, _, _, cx| {
+                        this.on_verse_select(n, cx);
+                    }),
                 )
                 .into_any_element()
             })
@@ -692,6 +792,59 @@ impl BibleView {
                     .py_4()
                     .gap_5()
                     .children(verses),
+            )
+            .when(select_mode, |d| d.child(self.render_select_bar(palette, cx)))
+    }
+
+    fn render_select_bar(&self, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let n = self.selected_verses.len();
+        let summary = if n == 0 {
+            "已選 0 節".to_string()
+        } else {
+            format!(
+                "已選 {n} 節 · {}",
+                format_ref_zh(&self.chapter, &self.selected_verses)
+            )
+        };
+        h_flex()
+            .w_full()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .px_6()
+            .py_3()
+            .border_t_1()
+            .border_color(rgb(palette.border))
+            .bg(rgb(palette.bg_sidebar))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_sm()
+                    .text_color(rgb(palette.fg_primary))
+                    .child(summary),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(chip(
+                        "select-copy",
+                        "複製",
+                        false,
+                        palette,
+                        cx.listener(|this, _, _, cx| {
+                            this.copy_selection(cx);
+                        }),
+                    ))
+                    .child(chip(
+                        "select-cancel",
+                        "取消",
+                        false,
+                        palette,
+                        cx.listener(|this, _, _, cx| {
+                            this.exit_select_mode(cx);
+                        }),
+                    )),
             )
     }
 
@@ -747,6 +900,15 @@ impl BibleView {
                         })),
                 )
             })
+            .child(chip(
+                "toggle-select",
+                "選擇",
+                self.select_mode,
+                palette,
+                cx.listener(|this, _, _, cx| {
+                    this.toggle_select_mode(cx);
+                }),
+            ))
             .child(chip(
                 "open-search",
                 "搜尋",
@@ -1017,7 +1179,7 @@ impl BibleView {
                         div()
                             .text_xs()
                             .text_color(rgb(palette.fg_muted))
-                            .child("設定儲存於 ~/.config/omarchy-bible/settings.json"),
+                            .child(settings_location_note_zh()),
                     ),
             )
     }
@@ -1230,6 +1392,9 @@ fn verse_block(
     en_size: f32,
     num_size: f32,
     highlighted: bool,
+    select_mode: bool,
+    selected: bool,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let texts = verse.texts_for(lanes);
     let lanes_ui: Vec<gpui::AnyElement> = texts
@@ -1250,18 +1415,40 @@ fn verse_block(
         })
         .collect();
 
+    let n = verse.number as usize;
     h_flex()
+        .id(("verse", n))
         .w_full()
         .items_start()
         .gap_3()
         .rounded_md()
-        .when(highlighted, |d| d.bg(rgb(palette.bg_hover)).px_2().py_1())
+        .when(highlighted || selected, |d| {
+            d.bg(rgb(palette.bg_hover)).px_2().py_1()
+        })
+        .on_click(on_click)
+        .when(select_mode, |d| d.cursor_pointer())
+        .when(select_mode, |d| {
+            d.child(
+                div()
+                    .w(px(16.0))
+                    .h(px(16.0))
+                    .mt(px(6.0))
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(if selected {
+                        palette.accent
+                    } else {
+                        palette.border
+                    }))
+                    .when(selected, |box_| box_.bg(rgb(palette.accent))),
+            )
+        })
         .child(
             div()
                 .w(px((num_size * 2.2).max(28.0)))
                 .pt(px(4.0))
                 .text_size(px(num_size))
-                .font_weight(if highlighted {
+                .font_weight(if highlighted || selected {
                     FontWeight::SEMIBOLD
                 } else {
                     FontWeight::NORMAL

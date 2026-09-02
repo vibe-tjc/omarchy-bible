@@ -1,10 +1,12 @@
-//! Persisted reader settings (XDG) and theme palettes.
+//! Persisted reader settings and theme palettes.
 
 use bible_core::ViewMode;
 use gpui::{App, Window, WindowAppearance};
 use serde::{Deserialize, Serialize};
+#[cfg(any(test, target_os = "linux"))]
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
 use std::time::SystemTime;
 
 pub const FONT_MIN: u32 = 14;
@@ -66,11 +68,7 @@ impl AppSettings {
     }
 
     pub fn config_path() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-            .unwrap_or_else(|| PathBuf::from(".config"));
-        base.join("omarchy-bible").join("settings.json")
+        config_dir().join("settings.json")
     }
 
     pub fn load() -> Self {
@@ -112,6 +110,36 @@ impl AppSettings {
 
     pub fn number_px(&self) -> f32 {
         (self.font_size as f32 * 0.72).round().max(11.0)
+    }
+}
+
+fn config_dir() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        let base = std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join("Library/Application Support"))
+            .unwrap_or_else(|| PathBuf::from("Library/Application Support"));
+        return base.join("omarchy-bible");
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+            .unwrap_or_else(|| PathBuf::from(".config"));
+        base.join("omarchy-bible")
+    }
+}
+
+/// Short Chinese note shown in the settings panel.
+pub fn settings_location_note_zh() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "設定儲存於 ~/Library/Application Support/omarchy-bible/settings.json"
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "設定儲存於 ~/.config/omarchy-bible/settings.json"
     }
 }
 
@@ -261,6 +289,7 @@ struct OmarchyTheme {
     palette: Option<Palette>,
 }
 
+#[cfg(target_os = "linux")]
 fn omarchy_theme_dir() -> Option<PathBuf> {
     let state = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
@@ -271,27 +300,36 @@ fn omarchy_theme_dir() -> Option<PathBuf> {
 
 /// Omarchy Quattro: `light.mode` marker in the current theme dir, else `colors.toml`
 /// `mode = "light"|"dark"`. Live colours from `colors.toml` when present.
+/// Linux only; macOS never inspects Omarchy paths.
 fn detect_omarchy() -> Option<OmarchyTheme> {
-    let dir = omarchy_theme_dir()?;
-    let light_marker = dir.join("light.mode").is_file();
-    let colors_path = dir.join("colors.toml");
-    let colors = std::fs::read_to_string(&colors_path).ok();
-    let toml_mode = colors.as_deref().and_then(colors_toml_mode);
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let dir = omarchy_theme_dir()?;
+        let light_marker = dir.join("light.mode").is_file();
+        let colors_path = dir.join("colors.toml");
+        let colors = std::fs::read_to_string(&colors_path).ok();
+        let toml_mode = colors.as_deref().and_then(colors_toml_mode);
 
-    let dark = if light_marker {
-        false
-    } else if let Some(is_light) = toml_mode {
-        !is_light
-    } else {
-        // Theme dir exists but no light.mode and no mode key — treat as dark
-        // only when we have nothing else; still an Omarchy signal.
-        true
-    };
+        let dark = if light_marker {
+            false
+        } else if let Some(is_light) = toml_mode {
+            !is_light
+        } else {
+            // Theme dir exists but no light.mode and no mode key — treat as dark
+            // only when we have nothing else; still an Omarchy signal.
+            true
+        };
 
-    let palette = colors.as_deref().and_then(palette_from_colors_toml);
-    Some(OmarchyTheme { dark, palette })
+        let palette = colors.as_deref().and_then(palette_from_colors_toml);
+        Some(OmarchyTheme { dark, palette })
+    }
 }
 
+#[cfg(any(test, target_os = "linux"))]
 fn colors_toml_mode(text: &str) -> Option<bool> {
     for line in text.lines() {
         let line = line.trim();
@@ -314,6 +352,7 @@ fn colors_toml_mode(text: &str) -> Option<bool> {
     None
 }
 
+#[cfg(any(test, target_os = "linux"))]
 fn parse_hex_rgb(value: &str) -> Option<u32> {
     let value = value.trim().trim_matches('"').trim_matches('\'');
     let hex = value.strip_prefix('#').unwrap_or(value);
@@ -323,6 +362,7 @@ fn parse_hex_rgb(value: &str) -> Option<u32> {
     u32::from_str_radix(hex, 16).ok()
 }
 
+#[cfg(any(test, target_os = "linux"))]
 fn palette_from_colors_toml(text: &str) -> Option<Palette> {
     let mut map: HashMap<&str, u32> = HashMap::new();
     for line in text.lines() {
@@ -368,19 +408,27 @@ fn palette_from_colors_toml(text: &str) -> Option<Palette> {
     })
 }
 
-/// Cheap stamp so the UI can poll Omarchy theme switches.
+/// Cheap stamp so the UI can poll Omarchy theme switches (Linux). No-op elsewhere.
 pub fn omarchy_stamp() -> Option<u128> {
-    let dir = omarchy_theme_dir()?;
-    let mut stamp = file_mtime(&dir).unwrap_or(0);
-    if let Some(m) = file_mtime(&dir.join("colors.toml")) {
-        stamp = stamp.saturating_add(m);
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
     }
-    if dir.join("light.mode").is_file() {
-        stamp = stamp.saturating_add(1);
+    #[cfg(target_os = "linux")]
+    {
+        let dir = omarchy_theme_dir()?;
+        let mut stamp = file_mtime(&dir).unwrap_or(0);
+        if let Some(m) = file_mtime(&dir.join("colors.toml")) {
+            stamp = stamp.saturating_add(m);
+        }
+        if dir.join("light.mode").is_file() {
+            stamp = stamp.saturating_add(1);
+        }
+        Some(stamp)
     }
-    Some(stamp)
 }
 
+#[cfg(target_os = "linux")]
 fn file_mtime(path: &Path) -> Option<u128> {
     let meta = std::fs::metadata(path).ok()?;
     let elapsed = meta
@@ -465,6 +513,35 @@ mod tests {
         assert_eq!(pal.accent, 0x1e66f5);
         assert_eq!(colors_toml_mode("mode = \"dark\"\n"), Some(false));
         assert_eq!(colors_toml_mode("accent = \"#fff\"\n"), None);
+    }
+
+    #[test]
+    fn config_path_is_platform_specific() {
+        let path = AppSettings::config_path();
+        let s = path.to_string_lossy();
+        assert!(s.contains("omarchy-bible"), "{s}");
+        assert!(s.ends_with("settings.json"), "{s}");
+        #[cfg(target_os = "macos")]
+        assert!(
+            s.contains("Library/Application Support"),
+            "macOS settings should live under Application Support, got {s}"
+        );
+        #[cfg(not(target_os = "macos"))]
+        assert!(
+            s.contains(".config") || std::env::var_os("XDG_CONFIG_HOME").is_some(),
+            "Linux settings should use XDG config, got {s}"
+        );
+        assert!(
+            !s.contains(".local/state/omarchy"),
+            "settings path must not be an Omarchy theme path: {s}"
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn detect_omarchy_is_none_off_linux() {
+        assert!(detect_omarchy().is_none());
+        assert!(omarchy_stamp().is_none());
     }
 
     #[test]

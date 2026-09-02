@@ -6,6 +6,7 @@ pub use catalog::{BookMeta, CANON, Testament, lookup_canon};
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::sync::Arc;
 
 /// Embedded verse-aligned Genesis 1 (CUV 1919 神版 + KJV). Public domain.
 const GENESIS_1_JSON: &str = include_str!(concat!(
@@ -120,21 +121,43 @@ impl ViewMode {
 pub struct Verse {
     pub number: u32,
     pub texts: Vec<(TranslationId, String)>,
+    /// Precomputed lowercase of non-CJK lanes (same ids as in `texts`).
+    folded: Vec<(TranslationId, String)>,
 }
 
 impl Verse {
-    pub fn bilingual(number: u32, chinese: impl Into<String>, english: impl Into<String>) -> Self {
+    pub fn from_texts(number: u32, texts: Vec<(TranslationId, String)>) -> Self {
+        let folded = texts
+            .iter()
+            .filter(|(id, _)| !id.is_cjk())
+            .map(|(id, text)| (*id, text.to_lowercase()))
+            .collect();
         Self {
             number,
-            texts: vec![
+            texts,
+            folded,
+        }
+    }
+
+    pub fn bilingual(number: u32, chinese: impl Into<String>, english: impl Into<String>) -> Self {
+        Self::from_texts(
+            number,
+            vec![
                 (TranslationId::Cuv1919, chinese.into()),
                 (TranslationId::Kjv, english.into()),
             ],
-        }
+        )
     }
 
     pub fn get(&self, id: TranslationId) -> Option<&str> {
         self.texts
+            .iter()
+            .find(|(tid, _)| *tid == id)
+            .map(|(_, text)| text.as_str())
+    }
+
+    fn folded_get(&self, id: TranslationId) -> Option<&str> {
+        self.folded
             .iter()
             .find(|(tid, _)| *tid == id)
             .map(|(_, text)| text.as_str())
@@ -145,6 +168,16 @@ impl Verse {
             .iter()
             .filter_map(|&id| self.get(id).map(|text| (id, text)))
             .collect()
+    }
+
+    /// Bytes of display strings plus precomputed search folds.
+    pub fn stored_string_bytes(&self) -> usize {
+        self.texts.iter().map(|(_, s)| s.len()).sum::<usize>()
+            + self.folded.iter().map(|(_, s)| s.len()).sum::<usize>()
+    }
+
+    pub fn stored_string_count(&self) -> usize {
+        self.texts.len() + self.folded.len()
     }
 }
 
@@ -176,14 +209,14 @@ pub struct Chapter {
     pub book_name_zh: String,
     pub book_name_en: String,
     pub chapter: u32,
-    pub verses: Vec<Verse>,
+    pub verses: Arc<[Verse]>,
 }
 
 impl Chapter {
     /// Unique translation ids present in this chapter, in first-seen order.
     pub fn available_translations(&self) -> Vec<TranslationId> {
         let mut ids = Vec::new();
-        for verse in &self.verses {
+        for verse in self.verses.iter() {
             for (id, _) in &verse.texts {
                 if !ids.contains(id) {
                     ids.push(*id);
@@ -310,8 +343,8 @@ struct FileAlignedVerse {
 
 struct BookData {
     entry: BookEntry,
-    /// 0-based index = chapter number - 1.
-    chapters: Vec<Vec<Verse>>,
+    /// 0-based index = chapter number - 1. Shared so `load_chapter_at` is an Arc clone.
+    chapters: Vec<Arc<[Verse]>>,
 }
 
 /// Offline 66-book bilingual store (CUV 神版 + KJV).
@@ -407,17 +440,18 @@ impl Bible {
             }
         }
 
+        let query_lower = query.to_lowercase();
         let mut hits = Vec::new();
         for book in &self.books {
             let meta = book.entry.meta;
             for (ch_idx, verses) in book.chapters.iter().enumerate() {
                 let chapter = (ch_idx as u32) + 1;
-                for verse in verses {
+                for verse in verses.iter() {
                     for &lane in &unique_lanes {
                         let Some(text) = verse.get(lane) else {
                             continue;
                         };
-                        if !text_matches(text, query, lane) {
+                        if !text_matches(verse, text, query, &query_lower, lane) {
                             continue;
                         }
                         hits.push(SearchHit {
@@ -427,7 +461,7 @@ impl Bible {
                             chapter,
                             verse: verse.number,
                             translation: lane,
-                            snippet: make_snippet(text, query, lane),
+                            snippet: make_snippet(text, query, &query_lower, lane),
                         });
                         break;
                     }
@@ -438,32 +472,36 @@ impl Bible {
     }
 }
 
-fn text_matches(text: &str, query: &str, lane: TranslationId) -> bool {
+fn text_matches(
+    verse: &Verse,
+    text: &str,
+    query: &str,
+    query_lower: &str,
+    lane: TranslationId,
+) -> bool {
     if lane.is_cjk() {
         text.contains(query)
+    } else if let Some(folded) = verse.folded_get(lane) {
+        folded.contains(query_lower)
     } else {
-        contains_ignore_case(text, query)
+        text.to_lowercase().contains(query_lower)
     }
 }
 
-fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
-    haystack.to_lowercase().contains(&needle.to_lowercase())
-}
-
-fn find_match_byte(text: &str, query: &str, cjk: bool) -> Option<usize> {
+fn find_match_byte(text: &str, query: &str, query_lower: &str, cjk: bool) -> Option<usize> {
     if cjk {
         text.find(query)
     } else {
         // KJV is ASCII; lowercasing preserves byte offsets.
-        text.to_lowercase().find(&query.to_lowercase())
+        text.to_lowercase().find(query_lower)
     }
 }
 
-fn make_snippet(text: &str, query: &str, lane: TranslationId) -> String {
+fn make_snippet(text: &str, query: &str, query_lower: &str, lane: TranslationId) -> String {
     let cjk = lane.is_cjk();
     let context = if cjk { 12 } else { 24 };
     let chars: Vec<char> = text.chars().collect();
-    let Some(byte_idx) = find_match_byte(text, query, cjk) else {
+    let Some(byte_idx) = find_match_byte(text, query, query_lower, cjk) else {
         return truncate_chars(&chars, 40);
     };
     let match_char = text[..byte_idx.min(text.len())].chars().count();
@@ -503,22 +541,21 @@ pub fn load_bible() -> Result<Bible, LoadError> {
             // Fallback should not happen for the committed 66-book pack.
             CANON.get(index).copied().unwrap_or(CANON[0])
         });
-        let mut chapters: Vec<Vec<Verse>> = Vec::new();
+        let mut chapters: Vec<Arc<[Verse]>> = Vec::new();
         for ch in raw.chapters {
             let n = ch.c as usize;
             if n == 0 {
                 continue;
             }
             if chapters.len() < n {
-                chapters.resize(n, Vec::new());
+                chapters.resize(n, Arc::from([]));
             }
-            chapters[n - 1] =
-                ch.v.into_iter()
-                    .map(|v| Verse {
-                        number: v.n,
-                        texts: vec![(TranslationId::Cuv1919, v.zh), (TranslationId::Kjv, v.en)],
-                    })
-                    .collect();
+            chapters[n - 1] = ch
+                .v
+                .into_iter()
+                .map(|v| Verse::bilingual(v.n, v.zh, v.en))
+                .collect::<Vec<_>>()
+                .into();
         }
         let chapter_count = chapters.len() as u32;
         books.push(BookData {
@@ -575,7 +612,7 @@ pub fn align_chapter(
         .map(|v| (v.number, v.text.as_str()))
         .collect();
 
-    let verses: Vec<Verse> = zh_ch
+    let verses: Arc<[Verse]> = zh_ch
         .verses
         .iter()
         .filter_map(|v| {
@@ -621,8 +658,75 @@ fn load_aligned_json(json: &str) -> Result<Chapter, LoadError> {
             .verses
             .into_iter()
             .map(|v| Verse::bilingual(v.number, v.zh, v.en))
-            .collect(),
+            .collect::<Vec<_>>()
+            .into(),
     })
+}
+
+/// Inclusive verse-number range currently selected (sorted, unique).
+pub fn selected_verse_range(numbers: &[u32]) -> Option<(u32, u32)> {
+    let mut nums: Vec<u32> = numbers.to_vec();
+    nums.sort_unstable();
+    nums.dedup();
+    let first = *nums.first()?;
+    let last = *nums.last()?;
+    Some((first, last))
+}
+
+/// Bottom-bar / copy header reference, e.g. `約翰福音 3:16–18`.
+pub fn format_ref_zh(chapter: &Chapter, numbers: &[u32]) -> String {
+    match selected_verse_range(numbers) {
+        Some((a, b)) if a == b => format!("{} {}:{}", chapter.book_name_zh, chapter.chapter, a),
+        Some((a, b)) => format!("{} {}:{}–{}", chapter.book_name_zh, chapter.chapter, a, b),
+        None => chapter.title_zh(),
+    }
+}
+
+/// Clipboard payload for the selected verses in the current view-mode lanes.
+///
+/// Single lane:
+/// ```text
+/// 約翰福音 3:16–18（和合本 1919 神版）
+/// 16 …
+/// 17 …
+/// ```
+///
+/// Compare: header lists every lane; each verse is `number` then stacked lane texts.
+pub fn format_verse_copy(chapter: &Chapter, numbers: &[u32], lanes: &[TranslationId]) -> String {
+    let mut nums: Vec<u32> = numbers.to_vec();
+    nums.sort_unstable();
+    nums.dedup();
+    let header_ref = format_ref_zh(chapter, &nums);
+    let lane_label = if lanes.is_empty() {
+        ViewMode::default().header_label()
+    } else {
+        lanes
+            .iter()
+            .map(|id| id.label())
+            .collect::<Vec<_>>()
+            .join(" · ")
+    };
+    let mut out = format!("{header_ref}（{lane_label}）\n");
+    let multi = lanes.len() > 1;
+    for n in nums {
+        let Some(verse) = chapter.verses.iter().find(|v| v.number == n) else {
+            continue;
+        };
+        let texts = verse.texts_for(lanes);
+        if texts.is_empty() {
+            continue;
+        }
+        if multi {
+            out.push_str(&format!("{n}\n"));
+            for (_, text) in texts {
+                out.push_str(text);
+                out.push('\n');
+            }
+        } else {
+            out.push_str(&format!("{n} {}\n", texts[0].1));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -898,5 +1002,41 @@ mod tests {
                 .iter()
                 .all(|v| !v.get(TranslationId::Cuv1919).unwrap_or("").contains("上帝"))
         );
+    }
+
+    #[test]
+    fn format_verse_copy_single_and_compare() {
+        let bible = load_bible().expect("bible");
+        let john = bible.load_chapter("John", 3).expect("John 3");
+        let nums = [16u32, 17, 18];
+        let single = format_verse_copy(&john, &nums, &[TranslationId::Cuv1919]);
+        assert!(single.starts_with("約翰福音 3:16–18（和合本 1919 神版）"), "{single}");
+        assert!(single.contains("16 "), "{single}");
+        assert!(single.contains("17 "), "{single}");
+        assert!(single.contains("18 "), "{single}");
+        assert!(!single.contains("KJV"), "{single}");
+
+        let both = format_verse_copy(
+            &john,
+            &nums,
+            &[TranslationId::Cuv1919, TranslationId::Kjv],
+        );
+        assert!(
+            both.starts_with("約翰福音 3:16–18（和合本 1919 神版 · KJV）"),
+            "{both}"
+        );
+        assert!(both.contains("\n16\n"), "{both}");
+        assert!(both.contains("God so loved") || both.to_lowercase().contains("god so loved"));
+        assert_eq!(format_ref_zh(&john, &nums), "約翰福音 3:16–18");
+        assert_eq!(format_ref_zh(&john, &[16]), "約翰福音 3:16");
+    }
+
+    #[test]
+    fn chapter_verses_are_shared_arc() {
+        let bible = load_bible().expect("bible");
+        let a = bible.load_chapter_at(0, 1).unwrap();
+        let b = bible.load_chapter_at(0, 1).unwrap();
+        assert!(Arc::ptr_eq(&a.verses, &b.verses));
+        assert_eq!(a.verses.len(), 31);
     }
 }
