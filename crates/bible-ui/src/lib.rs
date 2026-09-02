@@ -2,7 +2,10 @@
 
 mod settings;
 
-use bible_core::{Bible, BookEntry, Chapter, SearchHit, Testament, TranslationId, ViewMode, format_ref_zh, format_verse_copy};
+use bible_core::{
+    Bible, BookEntry, Chapter, SearchHit, Testament, TranslationId, VerseUnit, ViewMode,
+    apply_verse_tap, format_selection_summary, format_verse_copy,
+};
 use gpui::{
     App, Application, Bounds, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable,
     FontWeight, KeyBinding, MouseButton, ScrollHandle, SharedString, Subscription, Timer,
@@ -15,6 +18,7 @@ use settings::{
     AppSettings, FONT_LARGE, FONT_MEDIUM, FONT_SMALL, Palette, ResolvedTheme, ThemePreference,
     omarchy_stamp, resolve_theme, settings_location_note_zh,
 };
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 actions!(
@@ -156,7 +160,7 @@ pub struct BibleView {
     pending_scroll_verse: Option<u32>,
     chapter_scroll: ScrollHandle,
     select_mode: bool,
-    selected_verses: Vec<u32>,
+    selected_verses: BTreeSet<VerseUnit>,
     resolved: ResolvedTheme,
     omarchy_stamp: Option<u128>,
     _subscriptions: Vec<Subscription>,
@@ -233,7 +237,7 @@ impl BibleView {
             pending_scroll_verse: None,
             chapter_scroll: ScrollHandle::new(),
             select_mode: false,
-            selected_verses: Vec::new(),
+            selected_verses: BTreeSet::new(),
             resolved,
             omarchy_stamp: omarchy_stamp(),
             _subscriptions: subscriptions,
@@ -404,38 +408,37 @@ impl BibleView {
         cx.notify();
     }
 
-    fn on_verse_select(&mut self, number: u32, cx: &mut Context<Self>) {
+    fn on_verse_select(&mut self, number: u32, translation: TranslationId, cx: &mut Context<Self>) {
         if !self.select_mode {
             return;
         }
-        match self.selected_verses.as_slice() {
-            [] => self.selected_verses.push(number),
-            [only] if *only == number => self.selected_verses.clear(),
-            [only] => {
-                let a = *only;
-                let (lo, hi) = if a <= number { (a, number) } else { (number, a) };
-                self.selected_verses = self
-                    .chapter
-                    .verses
-                    .iter()
-                    .map(|v| v.number)
-                    .filter(|n| *n >= lo && *n <= hi)
-                    .collect();
-            }
-            _ => {
-                self.selected_verses.clear();
-                self.selected_verses.push(number);
-            }
+        let lanes = self.settings.view_mode.lanes();
+        if !lanes.contains(&translation) {
+            return;
         }
+        let verse_numbers: Vec<u32> = self.chapter.verses.iter().map(|v| v.number).collect();
+        apply_verse_tap(
+            &mut self.selected_verses,
+            number,
+            translation,
+            &verse_numbers,
+        );
         cx.notify();
     }
 
+    fn prune_hidden_selection(&mut self) {
+        let lanes = self.settings.view_mode.lanes();
+        self.selected_verses
+            .retain(|u| lanes.contains(&u.translation));
+    }
+
     fn copy_selection(&mut self, cx: &mut Context<Self>) {
+        self.prune_hidden_selection();
         if self.selected_verses.is_empty() {
             return;
         }
-        let lanes = self.settings.view_mode.lanes();
-        let text = format_verse_copy(&self.chapter, &self.selected_verses, &lanes);
+        let units: Vec<VerseUnit> = self.selected_verses.iter().copied().collect();
+        let text = format_verse_copy(&self.chapter, &units);
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
@@ -560,6 +563,7 @@ impl BibleView {
 
     fn set_view_mode(&mut self, mode: ViewMode, window: &mut Window, cx: &mut Context<Self>) {
         self.settings.view_mode = mode.sanitized();
+        self.prune_hidden_selection();
         self.persist_and_refresh(Some(window), cx);
     }
 }
@@ -726,7 +730,6 @@ impl BibleView {
             .iter()
             .map(|verse| {
                 let n = verse.number;
-                let is_sel = selected.contains(&n);
                 verse_block(
                     verse,
                     &lanes,
@@ -736,10 +739,8 @@ impl BibleView {
                     num,
                     highlight == Some(n),
                     select_mode,
-                    is_sel,
-                    cx.listener(move |this, _, _, cx| {
-                        this.on_verse_select(n, cx);
-                    }),
+                    &selected,
+                    cx,
                 )
                 .into_any_element()
             })
@@ -793,19 +794,14 @@ impl BibleView {
                     .gap_5()
                     .children(verses),
             )
-            .when(select_mode, |d| d.child(self.render_select_bar(palette, cx)))
+            .when(select_mode, |d| {
+                d.child(self.render_select_bar(palette, cx))
+            })
     }
 
     fn render_select_bar(&self, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        let n = self.selected_verses.len();
-        let summary = if n == 0 {
-            "已選 0 節".to_string()
-        } else {
-            format!(
-                "已選 {n} 節 · {}",
-                format_ref_zh(&self.chapter, &self.selected_verses)
-            )
-        };
+        let units: Vec<VerseUnit> = self.selected_verses.iter().copied().collect();
+        let summary = format_selection_summary(&self.chapter, &units);
         h_flex()
             .w_full()
             .items_center()
@@ -1384,6 +1380,22 @@ fn nav_button(
         .child(label)
 }
 
+fn lane_checkbox(selected: bool, palette: Palette) -> impl IntoElement {
+    div()
+        .w(px(16.0))
+        .h(px(16.0))
+        .mt(px(4.0))
+        .flex_shrink_0()
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(if selected {
+            palette.accent
+        } else {
+            palette.border
+        }))
+        .when(selected, |box_| box_.bg(rgb(palette.accent)))
+}
+
 fn verse_block(
     verse: &bible_core::Verse,
     lanes: &[TranslationId],
@@ -1393,62 +1405,66 @@ fn verse_block(
     num_size: f32,
     highlighted: bool,
     select_mode: bool,
-    selected: bool,
-    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    selected: &BTreeSet<VerseUnit>,
+    cx: &mut Context<BibleView>,
 ) -> impl IntoElement {
     let texts = verse.texts_for(lanes);
+    let n = verse.number;
+    let any_selected = texts
+        .iter()
+        .any(|(id, _)| selected.contains(&VerseUnit::new(n, *id)));
     let lanes_ui: Vec<gpui::AnyElement> = texts
         .into_iter()
-        .map(|(id, text)| {
+        .enumerate()
+        .map(|(lane_i, (id, text))| {
             let size = if id.is_cjk() { zh_size } else { en_size };
             let color = if id.is_cjk() {
                 palette.fg_primary
             } else {
                 palette.fg
             };
-            div()
+            let lane_selected = selected.contains(&VerseUnit::new(n, id));
+            let body = div()
                 .text_size(px(size))
                 .text_color(rgb(color))
                 .line_height(px((size * 1.55).round()))
-                .child(text.to_string())
+                .child(text.to_string());
+            h_flex()
+                .id(("verse-lane", n as usize * 8 + lane_i))
+                .w_full()
+                .items_start()
+                .gap_2()
+                .rounded_md()
+                .when(lane_selected, |d| d.bg(rgb(palette.bg_hover)).px_1())
+                .when(select_mode, |d| {
+                    d.cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.on_verse_select(n, id, cx);
+                        }))
+                })
+                .when(select_mode, |d| {
+                    d.child(lane_checkbox(lane_selected, palette))
+                })
+                .child(body.flex_1().min_w_0())
                 .into_any_element()
         })
         .collect();
 
-    let n = verse.number as usize;
     h_flex()
-        .id(("verse", n))
+        .id(("verse", n as usize))
         .w_full()
         .items_start()
         .gap_3()
         .rounded_md()
-        .when(highlighted || selected, |d| {
+        .when(highlighted || any_selected, |d| {
             d.bg(rgb(palette.bg_hover)).px_2().py_1()
-        })
-        .on_click(on_click)
-        .when(select_mode, |d| d.cursor_pointer())
-        .when(select_mode, |d| {
-            d.child(
-                div()
-                    .w(px(16.0))
-                    .h(px(16.0))
-                    .mt(px(6.0))
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(rgb(if selected {
-                        palette.accent
-                    } else {
-                        palette.border
-                    }))
-                    .when(selected, |box_| box_.bg(rgb(palette.accent))),
-            )
         })
         .child(
             div()
                 .w(px((num_size * 2.2).max(28.0)))
                 .pt(px(4.0))
                 .text_size(px(num_size))
-                .font_weight(if highlighted || selected {
+                .font_weight(if highlighted || any_selected {
                     FontWeight::SEMIBOLD
                 } else {
                     FontWeight::NORMAL

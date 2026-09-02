@@ -5,6 +5,7 @@ mod catalog;
 pub use catalog::{BookMeta, CANON, Testament, lookup_canon};
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -23,7 +24,7 @@ const BIBLE_JSON: &str = include_str!(concat!(
 /// Identifies a translation. Ships CUV 1919 神版 and KJV.
 ///
 /// Additional translations later become new variants; UI lanes are keyed by this id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TranslationId {
     /// Chinese Union Version, 1919, 神版 (public domain).
@@ -230,6 +231,10 @@ impl Chapter {
 impl Chapter {
     pub fn title_zh(&self) -> String {
         format!("{} {}", self.book_name_zh, self.chapter)
+    }
+
+    pub fn title_en(&self) -> String {
+        format!("{} {}", self.book_name_en, self.chapter)
     }
 }
 
@@ -550,12 +555,11 @@ pub fn load_bible() -> Result<Bible, LoadError> {
             if chapters.len() < n {
                 chapters.resize(n, Arc::from([]));
             }
-            chapters[n - 1] = ch
-                .v
-                .into_iter()
-                .map(|v| Verse::bilingual(v.n, v.zh, v.en))
-                .collect::<Vec<_>>()
-                .into();
+            chapters[n - 1] =
+                ch.v.into_iter()
+                    .map(|v| Verse::bilingual(v.n, v.zh, v.en))
+                    .collect::<Vec<_>>()
+                    .into();
         }
         let chapter_count = chapters.len() as u32;
         books.push(BookData {
@@ -673,6 +677,80 @@ pub fn selected_verse_range(numbers: &[u32]) -> Option<(u32, u32)> {
     Some((first, last))
 }
 
+/// One selected unit: a verse number in a specific translation lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct VerseUnit {
+    pub number: u32,
+    pub translation: TranslationId,
+}
+
+impl VerseUnit {
+    pub fn new(number: u32, translation: TranslationId) -> Self {
+        Self {
+            number,
+            translation,
+        }
+    }
+}
+
+/// Short language label for the select bar (`中文` / `英文`).
+pub fn translation_short_label(id: TranslationId) -> &'static str {
+    match id {
+        TranslationId::Cuv1919 => "中文",
+        TranslationId::Kjv => "英文",
+    }
+}
+
+/// Apply a select-mode tap to `translation` at `number`.
+///
+/// - Already selected → toggle off.
+/// - Exactly one unit selected in that translation → fill the inclusive range
+///   (union; does not uncheck units outside the range or in other translations).
+/// - Otherwise → toggle this unit on.
+pub fn apply_verse_tap(
+    selected: &mut BTreeSet<VerseUnit>,
+    number: u32,
+    translation: TranslationId,
+    verse_numbers: &[u32],
+) {
+    let unit = VerseUnit::new(number, translation);
+    if selected.contains(&unit) {
+        selected.remove(&unit);
+        return;
+    }
+    let same: Vec<u32> = selected
+        .iter()
+        .filter(|u| u.translation == translation)
+        .map(|u| u.number)
+        .collect();
+    if same.len() == 1 {
+        let a = same[0];
+        let (lo, hi) = if a <= number {
+            (a, number)
+        } else {
+            (number, a)
+        };
+        for &n in verse_numbers {
+            if n >= lo && n <= hi {
+                selected.insert(VerseUnit::new(n, translation));
+            }
+        }
+    } else {
+        selected.insert(unit);
+    }
+}
+
+fn numbers_for(selected: &[VerseUnit], id: TranslationId) -> Vec<u32> {
+    let mut nums: Vec<u32> = selected
+        .iter()
+        .filter(|u| u.translation == id)
+        .map(|u| u.number)
+        .collect();
+    nums.sort_unstable();
+    nums.dedup();
+    nums
+}
+
 /// Bottom-bar / copy header reference, e.g. `約翰福音 3:16–18`.
 pub fn format_ref_zh(chapter: &Chapter, numbers: &[u32]) -> String {
     match selected_verse_range(numbers) {
@@ -682,51 +760,79 @@ pub fn format_ref_zh(chapter: &Chapter, numbers: &[u32]) -> String {
     }
 }
 
-/// Clipboard payload for the selected verses in the current view-mode lanes.
+/// English reference, e.g. `John 3:16–18`.
+pub fn format_ref_en(chapter: &Chapter, numbers: &[u32]) -> String {
+    match selected_verse_range(numbers) {
+        Some((a, b)) if a == b => format!("{} {}:{}", chapter.book_name_en, chapter.chapter, a),
+        Some((a, b)) => format!("{} {}:{}–{}", chapter.book_name_en, chapter.chapter, a, b),
+        None => chapter.title_en(),
+    }
+}
+
+fn format_ref_for(chapter: &Chapter, id: TranslationId, numbers: &[u32]) -> String {
+    if id.is_cjk() {
+        format_ref_zh(chapter, numbers)
+    } else {
+        format_ref_en(chapter, numbers)
+    }
+}
+
+/// Bottom-bar summary, e.g. `已選 中文 3 節 · 英文 1 節 · 約翰福音 3:16–18 · John 3:16`.
+pub fn format_selection_summary(chapter: &Chapter, selected: &[VerseUnit]) -> String {
+    if selected.is_empty() {
+        return "已選 0 節".to_string();
+    }
+    let mut count_bits = Vec::new();
+    let mut ref_bits = Vec::new();
+    for &id in TranslationId::ALL {
+        let nums = numbers_for(selected, id);
+        if nums.is_empty() {
+            continue;
+        }
+        count_bits.push(format!("{} {} 節", translation_short_label(id), nums.len()));
+        ref_bits.push(format_ref_for(chapter, id, &nums));
+    }
+    if count_bits.is_empty() {
+        return "已選 0 節".to_string();
+    }
+    format!("已選 {} · {}", count_bits.join(" · "), ref_bits.join(" · "))
+}
+
+/// Clipboard payload grouped by translation. Only selected lanes are included.
 ///
-/// Single lane:
 /// ```text
 /// 約翰福音 3:16–18（和合本 1919 神版）
 /// 16 …
 /// 17 …
-/// ```
 ///
-/// Compare: header lists every lane; each verse is `number` then stacked lane texts.
-pub fn format_verse_copy(chapter: &Chapter, numbers: &[u32], lanes: &[TranslationId]) -> String {
-    let mut nums: Vec<u32> = numbers.to_vec();
-    nums.sort_unstable();
-    nums.dedup();
-    let header_ref = format_ref_zh(chapter, &nums);
-    let lane_label = if lanes.is_empty() {
-        ViewMode::default().header_label()
-    } else {
-        lanes
-            .iter()
-            .map(|id| id.label())
-            .collect::<Vec<_>>()
-            .join(" · ")
-    };
-    let mut out = format!("{header_ref}（{lane_label}）\n");
-    let multi = lanes.len() > 1;
-    for n in nums {
-        let Some(verse) = chapter.verses.iter().find(|v| v.number == n) else {
-            continue;
-        };
-        let texts = verse.texts_for(lanes);
-        if texts.is_empty() {
+/// John 3:16–18 (KJV)
+/// 16 …
+/// ```
+pub fn format_verse_copy(chapter: &Chapter, selected: &[VerseUnit]) -> String {
+    let mut blocks = Vec::new();
+    for &id in TranslationId::ALL {
+        let nums = numbers_for(selected, id);
+        if nums.is_empty() {
             continue;
         }
-        if multi {
-            out.push_str(&format!("{n}\n"));
-            for (_, text) in texts {
-                out.push_str(text);
-                out.push('\n');
-            }
+        let header = if id.is_cjk() {
+            format!("{}（{}）", format_ref_zh(chapter, &nums), id.label())
         } else {
-            out.push_str(&format!("{n} {}\n", texts[0].1));
+            format!("{} ({})", format_ref_en(chapter, &nums), id.label())
+        };
+        let mut block = format!("{header}\n");
+        for n in nums {
+            let Some(verse) = chapter.verses.iter().find(|v| v.number == n) else {
+                continue;
+            };
+            let Some(text) = verse.get(id) else {
+                continue;
+            };
+            block.push_str(&format!("{n} {text}\n"));
         }
+        blocks.push(block);
     }
-    out
+    blocks.join("\n")
 }
 
 #[cfg(test)]
@@ -1004,31 +1110,122 @@ mod tests {
         );
     }
 
+    fn john_verse_numbers(john: &Chapter) -> Vec<u32> {
+        john.verses.iter().map(|v| v.number).collect()
+    }
+
+    fn units(pairs: &[(u32, TranslationId)]) -> Vec<VerseUnit> {
+        pairs.iter().map(|&(n, id)| VerseUnit::new(n, id)).collect()
+    }
+
+    #[test]
+    fn apply_verse_tap_toggles_and_fills_range_per_translation() {
+        let bible = load_bible().expect("bible");
+        let john = bible.load_chapter("John", 3).expect("John 3");
+        let nums = john_verse_numbers(&john);
+        let mut sel = BTreeSet::new();
+
+        apply_verse_tap(&mut sel, 16, TranslationId::Cuv1919, &nums);
+        assert_eq!(sel.len(), 1);
+
+        apply_verse_tap(&mut sel, 18, TranslationId::Cuv1919, &nums);
+        let cuv: Vec<u32> = sel
+            .iter()
+            .filter(|u| u.translation == TranslationId::Cuv1919)
+            .map(|u| u.number)
+            .collect();
+        assert_eq!(cuv, vec![16, 17, 18]);
+
+        apply_verse_tap(&mut sel, 21, TranslationId::Cuv1919, &nums);
+        let cuv: Vec<u32> = sel
+            .iter()
+            .filter(|u| u.translation == TranslationId::Cuv1919)
+            .map(|u| u.number)
+            .collect();
+        assert_eq!(
+            cuv,
+            vec![16, 17, 18, 21],
+            "further taps toggle only, never wipe"
+        );
+
+        apply_verse_tap(&mut sel, 17, TranslationId::Cuv1919, &nums);
+        assert!(!sel.contains(&VerseUnit::new(17, TranslationId::Cuv1919)));
+        assert!(sel.contains(&VerseUnit::new(16, TranslationId::Cuv1919)));
+        assert!(sel.contains(&VerseUnit::new(18, TranslationId::Cuv1919)));
+
+        apply_verse_tap(&mut sel, 16, TranslationId::Kjv, &nums);
+        assert!(sel.contains(&VerseUnit::new(16, TranslationId::Cuv1919)));
+        assert!(sel.contains(&VerseUnit::new(16, TranslationId::Kjv)));
+        assert!(!sel.contains(&VerseUnit::new(17, TranslationId::Kjv)));
+
+        apply_verse_tap(&mut sel, 18, TranslationId::Kjv, &nums);
+        let kjv: Vec<u32> = sel
+            .iter()
+            .filter(|u| u.translation == TranslationId::Kjv)
+            .map(|u| u.number)
+            .collect();
+        assert_eq!(kjv, vec![16, 17, 18]);
+        assert!(
+            sel.contains(&VerseUnit::new(21, TranslationId::Cuv1919)),
+            "range fill must not uncheck other translations or verses outside the range"
+        );
+    }
+
     #[test]
     fn format_verse_copy_single_and_compare() {
         let bible = load_bible().expect("bible");
         let john = bible.load_chapter("John", 3).expect("John 3");
         let nums = [16u32, 17, 18];
-        let single = format_verse_copy(&john, &nums, &[TranslationId::Cuv1919]);
-        assert!(single.starts_with("約翰福音 3:16–18（和合本 1919 神版）"), "{single}");
+        let cuv = units(&[
+            (16, TranslationId::Cuv1919),
+            (17, TranslationId::Cuv1919),
+            (18, TranslationId::Cuv1919),
+        ]);
+        let single = format_verse_copy(&john, &cuv);
+        assert!(
+            single.starts_with("約翰福音 3:16–18（和合本 1919 神版）"),
+            "{single}"
+        );
         assert!(single.contains("16 "), "{single}");
         assert!(single.contains("17 "), "{single}");
         assert!(single.contains("18 "), "{single}");
         assert!(!single.contains("KJV"), "{single}");
+        assert!(!single.contains("John 3"), "{single}");
 
-        let both = format_verse_copy(
-            &john,
-            &nums,
-            &[TranslationId::Cuv1919, TranslationId::Kjv],
-        );
+        let both_units = units(&[
+            (16, TranslationId::Cuv1919),
+            (17, TranslationId::Cuv1919),
+            (18, TranslationId::Cuv1919),
+            (16, TranslationId::Kjv),
+            (17, TranslationId::Kjv),
+            (18, TranslationId::Kjv),
+        ]);
+        let both = format_verse_copy(&john, &both_units);
         assert!(
-            both.starts_with("約翰福音 3:16–18（和合本 1919 神版 · KJV）"),
+            both.starts_with("約翰福音 3:16–18（和合本 1919 神版）"),
             "{both}"
         );
-        assert!(both.contains("\n16\n"), "{both}");
+        assert!(both.contains("John 3:16–18 (KJV)"), "{both}");
         assert!(both.contains("God so loved") || both.to_lowercase().contains("god so loved"));
         assert_eq!(format_ref_zh(&john, &nums), "約翰福音 3:16–18");
         assert_eq!(format_ref_zh(&john, &[16]), "約翰福音 3:16");
+        assert_eq!(format_ref_en(&john, &nums), "John 3:16–18");
+        assert_eq!(
+            format_selection_summary(&john, &both_units),
+            "已選 中文 3 節 · 英文 3 節 · 約翰福音 3:16–18 · John 3:16–18"
+        );
+        assert_eq!(
+            format_selection_summary(&john, &cuv),
+            "已選 中文 3 節 · 約翰福音 3:16–18"
+        );
+        let kjv_only = units(&[(16, TranslationId::Kjv)]);
+        let kjv_copy = format_verse_copy(&john, &kjv_only);
+        assert!(kjv_copy.starts_with("John 3:16 (KJV)"), "{kjv_copy}");
+        assert!(!kjv_copy.contains("和合本"), "{kjv_copy}");
+        assert_eq!(
+            format_selection_summary(&john, &kjv_only),
+            "已選 英文 1 節 · John 3:16"
+        );
     }
 
     #[test]
