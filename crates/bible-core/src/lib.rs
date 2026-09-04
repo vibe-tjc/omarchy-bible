@@ -4,7 +4,7 @@ mod catalog;
 mod hebrew;
 
 pub use catalog::{BibleRef, BookMeta, CANON, Testament, lookup_canon, parse_bible_ref};
-pub use hebrew::{HebrewWord, OT_OSIS, hebrew_book_count, hebrew_verse, has_hebrew_notes};
+pub use hebrew::{HebrewWord, OT_OSIS, hebrew_book_count, hebrew_verse, has_hebrew_notes, morph_pos_label};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;

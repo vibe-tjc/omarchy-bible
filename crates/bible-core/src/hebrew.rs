@@ -1,10 +1,13 @@
 //! MorphHB / Open Scriptures Hebrew morphology (OT).
 //!
-//! Source files: `data/he/{Osis}.json` — chapters → verses → `[text, lemma, morph]`.
-//! All 39 OT books are embedded via `include_str!`. Versification is English/CUV-aligned
+//! Runtime pack: `data/he/morphhb-ot.json.gz` — JSON object keyed by OSIS id,
+//! each value chapters → verses → `[text, lemma, morph]`.
+//! Embedded via `include_bytes!` + `flate2`. Versification is English/CUV-aligned
 //! (`remapVerses` at import time). NT books are omitted; [`hebrew_verse`] returns `None`.
 
+use flate2::read::GzDecoder;
 use std::collections::HashMap;
+use std::io::Read;
 use std::sync::OnceLock;
 
 /// One MorphHB word in Hebrew reading order (first = rightmost in RTL display).
@@ -54,9 +57,7 @@ fn word_from_json(v: &serde_json::Value) -> Option<HebrewWord> {
     parse_word(&parts)
 }
 
-fn load_book_json(raw: &str) -> Result<Vec<Vec<Vec<HebrewWord>>>, String> {
-    let value: serde_json::Value =
-        serde_json::from_str(raw).map_err(|e| format!("invalid JSON: {e}"))?;
+fn load_book_value(value: &serde_json::Value) -> Result<Vec<Vec<Vec<HebrewWord>>>, String> {
     let chapters = value
         .as_array()
         .ok_or_else(|| "hebrew book JSON must be an array of chapters".to_string())?;
@@ -83,62 +84,35 @@ struct HebrewStore {
     books: HashMap<String, Vec<Vec<Vec<HebrewWord>>>>,
 }
 
-macro_rules! he_include {
-    ($file:literal) => {
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/he/", $file))
-    };
-}
-
-fn insert_book(books: &mut HashMap<String, Vec<Vec<Vec<HebrewWord>>>>, osis: &str, raw: &str) {
-    let book = load_book_json(raw).unwrap_or_else(|e| {
-        panic!("hebrew book {osis}: {e}");
-    });
-    books.insert(osis.to_string(), book);
-}
+/// Committed MorphHB OT pack (JSON object keyed by OSIS).
+const MORPHHB_OT_GZ: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../data/he/morphhb-ot.json.gz"
+));
 
 fn store() -> &'static HebrewStore {
     static STORE: OnceLock<HebrewStore> = OnceLock::new();
     STORE.get_or_init(|| {
+        let mut decoder = GzDecoder::new(MORPHHB_OT_GZ);
+        let mut json = String::new();
+        decoder
+            .read_to_string(&mut json)
+            .unwrap_or_else(|e| panic!("decompress morphhb-ot.json.gz: {e}"));
+        let root: serde_json::Value = serde_json::from_str(&json)
+            .unwrap_or_else(|e| panic!("parse morphhb-ot.json.gz: {e}"));
+        let obj = root
+            .as_object()
+            .unwrap_or_else(|| panic!("morphhb-ot.json.gz root must be an object keyed by OSIS"));
         let mut books = HashMap::with_capacity(OT_OSIS.len());
-        insert_book(&mut books, "Gen", he_include!("Gen.json"));
-        insert_book(&mut books, "Exod", he_include!("Exod.json"));
-        insert_book(&mut books, "Lev", he_include!("Lev.json"));
-        insert_book(&mut books, "Num", he_include!("Num.json"));
-        insert_book(&mut books, "Deut", he_include!("Deut.json"));
-        insert_book(&mut books, "Josh", he_include!("Josh.json"));
-        insert_book(&mut books, "Judg", he_include!("Judg.json"));
-        insert_book(&mut books, "Ruth", he_include!("Ruth.json"));
-        insert_book(&mut books, "1Sam", he_include!("1Sam.json"));
-        insert_book(&mut books, "2Sam", he_include!("2Sam.json"));
-        insert_book(&mut books, "1Kgs", he_include!("1Kgs.json"));
-        insert_book(&mut books, "2Kgs", he_include!("2Kgs.json"));
-        insert_book(&mut books, "1Chr", he_include!("1Chr.json"));
-        insert_book(&mut books, "2Chr", he_include!("2Chr.json"));
-        insert_book(&mut books, "Ezra", he_include!("Ezra.json"));
-        insert_book(&mut books, "Neh", he_include!("Neh.json"));
-        insert_book(&mut books, "Esth", he_include!("Esth.json"));
-        insert_book(&mut books, "Job", he_include!("Job.json"));
-        insert_book(&mut books, "Ps", he_include!("Ps.json"));
-        insert_book(&mut books, "Prov", he_include!("Prov.json"));
-        insert_book(&mut books, "Eccl", he_include!("Eccl.json"));
-        insert_book(&mut books, "Song", he_include!("Song.json"));
-        insert_book(&mut books, "Isa", he_include!("Isa.json"));
-        insert_book(&mut books, "Jer", he_include!("Jer.json"));
-        insert_book(&mut books, "Lam", he_include!("Lam.json"));
-        insert_book(&mut books, "Ezek", he_include!("Ezek.json"));
-        insert_book(&mut books, "Dan", he_include!("Dan.json"));
-        insert_book(&mut books, "Hos", he_include!("Hos.json"));
-        insert_book(&mut books, "Joel", he_include!("Joel.json"));
-        insert_book(&mut books, "Amos", he_include!("Amos.json"));
-        insert_book(&mut books, "Obad", he_include!("Obad.json"));
-        insert_book(&mut books, "Jonah", he_include!("Jonah.json"));
-        insert_book(&mut books, "Mic", he_include!("Mic.json"));
-        insert_book(&mut books, "Nah", he_include!("Nah.json"));
-        insert_book(&mut books, "Hab", he_include!("Hab.json"));
-        insert_book(&mut books, "Zeph", he_include!("Zeph.json"));
-        insert_book(&mut books, "Hag", he_include!("Hag.json"));
-        insert_book(&mut books, "Zech", he_include!("Zech.json"));
-        insert_book(&mut books, "Mal", he_include!("Mal.json"));
+        for &osis in OT_OSIS {
+            let raw = obj
+                .get(osis)
+                .unwrap_or_else(|| panic!("morphhb-ot.json.gz missing book {osis}"));
+            let book = load_book_value(raw).unwrap_or_else(|e| {
+                panic!("hebrew book {osis}: {e}");
+            });
+            books.insert(osis.to_string(), book);
+        }
         debug_assert_eq!(books.len(), 39);
         HebrewStore { books }
     })
@@ -169,6 +143,59 @@ pub fn has_hebrew_notes(osis: &str, chapter: u32, verse: u32) -> bool {
 /// Number of OT books loaded in the MorphHB store.
 pub fn hebrew_book_count() -> usize {
     store().books.len()
+}
+
+/// Map MorphHB part-of-speech letter to a short Traditional Chinese label.
+fn pos_letter_label(pos: char) -> Option<&'static str> {
+    match pos {
+        'A' => Some("形容詞"),
+        'C' => Some("連接詞"),
+        'D' => Some("副詞"),
+        'N' => Some("名詞"),
+        'P' => Some("代名詞"),
+        'R' => Some("介詞"),
+        'S' => Some("詞綴"),
+        'T' => Some("助詞"),
+        'V' => Some("動詞"),
+        _ => None,
+    }
+}
+
+/// Derive a short 詞性 label from a MorphHB morph code.
+///
+/// Codes look like `HNcmpa`, `HVqp3ms`, or compounds `HR/Ncfsa` (lang `H`/`A`
+/// + `/`-separated segments). We take the **last non-suffix** segment's POS
+/// letter (suffixes start with `S`) so `HNcmpa` → 名詞 and `HR/Ncfsa` → 名詞.
+/// Returns `None` when morph is empty or no known POS letter is found.
+/// Does not invent Strong's glosses — only maps the morph category letter.
+pub fn morph_pos_label(morph: &str) -> Option<&'static str> {
+    let morph = morph.trim();
+    if morph.is_empty() {
+        return None;
+    }
+    // One language code prefixes the whole string (H = Hebrew, A = Aramaic).
+    let body = if morph.starts_with('H') || morph.starts_with('A') {
+        &morph[1..]
+    } else {
+        morph
+    };
+    let mut last_content: Option<char> = None;
+    let mut last_suffix: Option<char> = None;
+    for seg in body.split('/') {
+        let Some(pos) = seg.chars().next() else {
+            continue;
+        };
+        if pos == 'S' {
+            last_suffix = Some(pos);
+            continue;
+        }
+        if pos_letter_label(pos).is_some() {
+            last_content = Some(pos);
+        }
+    }
+    last_content
+        .or(last_suffix)
+        .and_then(pos_letter_label)
 }
 
 #[cfg(test)]
@@ -206,5 +233,19 @@ mod tests {
     fn john_3_16_is_none() {
         assert!(hebrew_verse("John", 3, 16).is_none());
         assert!(!has_hebrew_notes("John", 3, 16));
+    }
+
+    #[test]
+    fn morph_pos_label_from_prefix() {
+        assert_eq!(morph_pos_label("HNcmpa"), Some("名詞"));
+        assert_eq!(morph_pos_label("HVqp3ms"), Some("動詞"));
+        assert_eq!(morph_pos_label("HAamsa"), Some("形容詞"));
+        assert_eq!(morph_pos_label("HR/Ncfsa"), Some("名詞"));
+        assert_eq!(morph_pos_label("HC/To"), Some("助詞"));
+        assert_eq!(morph_pos_label("HTd/Ncmpa"), Some("名詞"));
+        assert_eq!(morph_pos_label("HR/Ncmsc/Sp3ms"), Some("名詞"));
+        assert_eq!(morph_pos_label("HC"), Some("連接詞"));
+        assert_eq!(morph_pos_label(""), None);
+        assert_eq!(morph_pos_label("   "), None);
     }
 }
