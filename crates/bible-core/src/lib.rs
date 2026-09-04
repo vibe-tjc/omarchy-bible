@@ -2,7 +2,7 @@
 
 mod catalog;
 
-pub use catalog::{BookMeta, CANON, Testament, lookup_canon};
+pub use catalog::{BibleRef, BookMeta, CANON, Testament, lookup_canon, parse_bible_ref};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -573,6 +573,7 @@ pub fn load_bible() -> Result<Bible, LoadError> {
                         raw.book_id
                     },
                     name_zh: meta.name_zh,
+                    name_zh_short: meta.name_zh_short,
                     name_en: meta.name_en,
                     testament: meta.testament,
                 },

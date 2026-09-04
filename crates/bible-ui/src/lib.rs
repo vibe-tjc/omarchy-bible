@@ -4,7 +4,7 @@ mod settings;
 
 use bible_core::{
     Bible, BookEntry, Chapter, SearchHit, Testament, TranslationId, VerseUnit, ViewMode,
-    apply_verse_tap, format_selection_summary, format_verse_copy,
+    apply_verse_tap, format_selection_summary, format_verse_copy, parse_bible_ref,
 };
 use gpui::{
     App, Application, Bounds, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable,
@@ -13,6 +13,7 @@ use gpui::{
     size,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::tooltip::Tooltip;
 use gpui_component::{Root, Theme, ThemeMode, h_flex, v_flex};
 use settings::{
     AppSettings, FONT_LARGE, FONT_MEDIUM, FONT_SMALL, Palette, ResolvedTheme, ThemePreference,
@@ -152,6 +153,7 @@ pub struct BibleView {
     settings_open: bool,
     search_open: bool,
     search_input: Entity<InputState>,
+    jump_input: Entity<InputState>,
     search_hits: Vec<SearchHit>,
     search_total: usize,
     search_all_lanes: bool,
@@ -159,6 +161,7 @@ pub struct BibleView {
     highlight_verse: Option<u32>,
     pending_scroll_verse: Option<u32>,
     chapter_scroll: ScrollHandle,
+    chapter_picker_open: bool,
     select_mode: bool,
     selected_verses: BTreeSet<VerseUnit>,
     resolved: ResolvedTheme,
@@ -188,6 +191,7 @@ impl BibleView {
         );
 
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜尋經文…"));
+        let jump_input = cx.new(|cx| InputState::new(window, cx).placeholder("約3:16 / Gen 1:1"));
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| {
@@ -202,6 +206,14 @@ impl BibleView {
             |this, _input, event, window, cx| match event {
                 InputEvent::Change => this.on_search_input_change(cx),
                 InputEvent::PressEnter { .. } => this.jump_first_search_hit(window, cx),
+                _ => {}
+            },
+        ));
+        subscriptions.push(cx.subscribe_in(
+            &jump_input,
+            window,
+            |this, _input, event, window, cx| match event {
+                InputEvent::PressEnter { .. } => this.submit_jump(window, cx),
                 _ => {}
             },
         ));
@@ -229,6 +241,7 @@ impl BibleView {
             settings_open: false,
             search_open: false,
             search_input,
+            jump_input,
             search_hits: Vec::new(),
             search_total: 0,
             search_all_lanes: false,
@@ -236,6 +249,7 @@ impl BibleView {
             highlight_verse: None,
             pending_scroll_verse: None,
             chapter_scroll: ScrollHandle::new(),
+            chapter_picker_open: false,
             select_mode: false,
             selected_verses: BTreeSet::new(),
             resolved,
@@ -311,6 +325,7 @@ impl BibleView {
             self.highlight_verse = highlight;
             self.pending_scroll_verse = highlight;
             self.selected_verses.clear();
+            self.chapter_picker_open = false;
             cx.notify();
         }
     }
@@ -370,6 +385,12 @@ impl BibleView {
     fn close_settings(&mut self, _: &CloseSettings, window: &mut Window, cx: &mut Context<Self>) {
         if self.select_mode {
             self.exit_select_mode(cx);
+            return;
+        }
+        if self.chapter_picker_open {
+            self.chapter_picker_open = false;
+            window.focus(&self.focus_handle);
+            cx.notify();
             return;
         }
         if self.search_open {
@@ -540,6 +561,47 @@ impl BibleView {
         self.goto_chapter(number, cx);
     }
 
+    fn submit_jump(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let raw = self.jump_input.read(cx).value().to_string();
+        let Some(parsed) = parse_bible_ref(&raw) else {
+            return;
+        };
+        let book_index = (parsed.book.book_id as usize).saturating_sub(1);
+        let Some(entry) = self.bible.book_at(book_index) else {
+            return;
+        };
+        if entry.meta.osis != parsed.book.osis {
+            // Prefer OSIS match if catalog order ever drifts.
+            let Some(idx) = self
+                .bible
+                .catalog()
+                .iter()
+                .find(|e| e.meta.osis == parsed.book.osis)
+                .map(|e| e.index)
+            else {
+                return;
+            };
+            let entry = self.bible.book_at(idx).expect("osis book");
+            let chapter = parsed.chapter.clamp(1, entry.chapter_count.max(1));
+            self.goto_internal(idx, chapter, parsed.verse, cx);
+        } else {
+            let chapter = parsed.chapter.clamp(1, entry.chapter_count.max(1));
+            self.goto_internal(book_index, chapter, parsed.verse, cx);
+        }
+        window.focus(&self.focus_handle);
+        cx.notify();
+    }
+
+    fn toggle_sidebar_abbrev(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings.sidebar_abbrev = !self.settings.sidebar_abbrev;
+        self.persist_and_refresh(Some(window), cx);
+    }
+
+    fn toggle_chapter_picker(&mut self, cx: &mut Context<Self>) {
+        self.chapter_picker_open = !self.chapter_picker_open;
+        cx.notify();
+    }
+
     fn set_theme_pref(
         &mut self,
         pref: ThemePreference,
@@ -630,6 +692,14 @@ impl Render for BibleView {
             .when(search_open, |d| {
                 d.child(self.render_search_overlay(palette, cx))
             })
+            .when(self.chapter_picker_open, |d| {
+                d.child(self.render_chapter_picker_overlay(
+                    chapter_count,
+                    current_chapter,
+                    palette,
+                    cx,
+                ))
+            })
     }
 }
 
@@ -641,6 +711,7 @@ impl BibleView {
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let abbrev = self.settings.sidebar_abbrev;
         let mut items: Vec<gpui::AnyElement> = Vec::new();
         let mut last_testament: Option<Testament> = None;
 
@@ -660,40 +731,63 @@ impl BibleView {
 
             let index = entry.index;
             let is_current = index == current_index;
-            let name = entry.meta.name_zh;
-            items.push(
-                div()
-                    .id(("book", index))
-                    .w_full()
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .when(is_current, |d| {
-                        d.bg(rgb(palette.bg_hover)).text_color(rgb(palette.accent))
-                    })
-                    .when(!is_current, |d| d.hover(|s| s.bg(rgb(palette.bg_hover))))
-                    .on_click(cx.listener(move |this, event, window, cx| {
-                        this.on_book_click(index, event, window, cx);
-                    }))
-                    .child(name)
-                    .into_any_element(),
-            );
+            let label = if abbrev {
+                entry.meta.name_zh_short
+            } else {
+                entry.meta.name_zh
+            };
+            let full_name = entry.meta.name_zh;
+            let mut row = div()
+                .id(("book", index))
+                .w_full()
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .when(is_current, |d| {
+                    d.bg(rgb(palette.bg_hover)).text_color(rgb(palette.accent))
+                })
+                .when(!is_current, |d| d.hover(|s| s.bg(rgb(palette.bg_hover))))
+                .on_click(cx.listener(move |this, event, window, cx| {
+                    this.on_book_click(index, event, window, cx);
+                }))
+                .child(label);
+            if abbrev {
+                row = row.tooltip(move |window, cx| Tooltip::new(full_name).build(window, cx));
+            }
+            items.push(row.into_any_element());
         }
 
+        let sidebar_w = if abbrev { px(100.0) } else { px(220.0) };
+
         v_flex()
-            .w(px(220.0))
+            .w(sidebar_w)
             .h_full()
             .bg(rgb(palette.bg_sidebar))
             .border_r_1()
             .border_color(rgb(palette.border))
             .child(
-                div()
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
                     .px_3()
                     .pt_4()
                     .pb_2()
-                    .text_xs()
-                    .text_color(rgb(palette.fg_muted))
-                    .child("書卷"),
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(palette.fg_muted))
+                            .child("書卷"),
+                    )
+                    .child(chip(
+                        "sidebar-abbrev-toggle",
+                        if abbrev { "全名" } else { "簡稱" },
+                        abbrev,
+                        palette,
+                        cx.listener(|this, _, window, cx| {
+                            this.toggle_sidebar_abbrev(window, cx);
+                        }),
+                    )),
             )
             .child(
                 v_flex()
@@ -775,10 +869,33 @@ impl BibleView {
                             .child(self.render_header_controls(palette, cx)),
                     )
                     .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(palette.fg_muted))
-                            .child(lanes_label),
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(palette.fg_muted))
+                                    .flex_shrink_0()
+                                    .child(lanes_label),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(160.0))
+                                    .max_w(px(280.0))
+                                    .child(Input::new(&self.jump_input).cleanable(true).w_full()),
+                            )
+                            .child(chip(
+                                "jump-go",
+                                "跳轉",
+                                false,
+                                palette,
+                                cx.listener(|this, _, window, cx| {
+                                    this.submit_jump(window, cx);
+                                }),
+                            )),
                     )
                     .child(self.render_chapter_nav(current_chapter, chapter_count, palette, cx)),
             )
@@ -933,30 +1050,7 @@ impl BibleView {
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let numbers: Vec<gpui::AnyElement> = (1..=chapter_count)
-            .map(|n| {
-                let is_current = n == current_chapter;
-                div()
-                    .id(("ch", n as usize))
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .text_sm()
-                    .when(is_current, |d| {
-                        d.bg(rgb(palette.bg_hover)).text_color(rgb(palette.accent))
-                    })
-                    .when(!is_current, |d| {
-                        d.text_color(rgb(palette.fg_muted))
-                            .hover(|s| s.bg(rgb(palette.bg_hover)))
-                    })
-                    .on_click(cx.listener(move |this, event, window, cx| {
-                        this.on_chapter_click(n, event, window, cx);
-                    }))
-                    .child(format!("{n}"))
-                    .into_any_element()
-            })
-            .collect();
-
+        let picker_open = self.chapter_picker_open;
         h_flex()
             .w_full()
             .items_center()
@@ -969,19 +1063,20 @@ impl BibleView {
             ))
             .child(
                 div()
-                    .text_xs()
+                    .min_w(px(52.0))
+                    .text_sm()
                     .text_color(rgb(palette.fg_muted))
-                    .child(format!("{current_chapter} / {chapter_count}")),
+                    .child(format!("{current_chapter}/{chapter_count}")),
             )
-            .child(
-                h_flex()
-                    .id("chapter-numbers")
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_x_scroll()
-                    .gap_1()
-                    .children(numbers),
-            )
+            .child(chip(
+                "chapter-picker-btn",
+                "章",
+                picker_open,
+                palette,
+                cx.listener(|this, _, _, cx| {
+                    this.toggle_chapter_picker(cx);
+                }),
+            ))
             .child(nav_button(
                 "next-ch",
                 "›",
@@ -1172,10 +1267,145 @@ impl BibleView {
                             ),
                     )
                     .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(palette.fg_muted))
+                                    .child("側邊欄書名"),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(chip(
+                                        "settings-book-full",
+                                        "全名",
+                                        !self.settings.sidebar_abbrev,
+                                        palette,
+                                        cx.listener(|this, _, window, cx| {
+                                            this.settings.sidebar_abbrev = false;
+                                            this.persist_and_refresh(Some(window), cx);
+                                        }),
+                                    ))
+                                    .child(chip(
+                                        "settings-book-short",
+                                        "簡稱",
+                                        self.settings.sidebar_abbrev,
+                                        palette,
+                                        cx.listener(|this, _, window, cx| {
+                                            this.settings.sidebar_abbrev = true;
+                                            this.persist_and_refresh(Some(window), cx);
+                                        }),
+                                    )),
+                            ),
+                    )
+                    .child(
                         div()
                             .text_xs()
                             .text_color(rgb(palette.fg_muted))
                             .child(settings_location_note_zh()),
+                    ),
+            )
+    }
+
+    fn render_chapter_picker_overlay(
+        &self,
+        chapter_count: u32,
+        current_chapter: u32,
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let cells: Vec<gpui::AnyElement> = (1..=chapter_count)
+            .map(|n| {
+                let is_current = n == current_chapter;
+                div()
+                    .id(("picker-ch", n as usize))
+                    .w(px(40.0))
+                    .h(px(36.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_md()
+                    .text_sm()
+                    .when(is_current, |d| {
+                        d.bg(rgb(palette.bg_hover)).text_color(rgb(palette.accent))
+                    })
+                    .when(!is_current, |d| {
+                        d.text_color(rgb(palette.fg_muted))
+                            .hover(|s| s.bg(rgb(palette.bg_hover)))
+                    })
+                    .on_click(cx.listener(move |this, event, window, cx| {
+                        this.on_chapter_click(n, event, window, cx);
+                    }))
+                    .child(format!("{n}"))
+                    .into_any_element()
+            })
+            .collect();
+
+        div()
+            .id("chapter-picker-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .flex_col()
+            .items_center()
+            .pt(px(120.0))
+            .bg(rgba(0x00000066))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.chapter_picker_open = false;
+                    window.focus(&this.focus_handle);
+                    cx.notify();
+                }),
+            )
+            .child(
+                v_flex()
+                    .id("chapter-picker-panel")
+                    .w(px(420.0))
+                    .max_h(px(480.0))
+                    .bg(rgb(palette.bg_sidebar))
+                    .border_1()
+                    .border_color(rgb(palette.border))
+                    .rounded_md()
+                    .px_4()
+                    .py_3()
+                    .gap_3()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(palette.fg_primary))
+                                    .child("選擇章節"),
+                            )
+                            .child(chip(
+                                "chapter-picker-close",
+                                "關閉",
+                                false,
+                                palette,
+                                cx.listener(|this, _, window, cx| {
+                                    this.chapter_picker_open = false;
+                                    window.focus(&this.focus_handle);
+                                    cx.notify();
+                                }),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("chapter-picker-grid")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(h_flex().w_full().flex_wrap().gap_1().children(cells)),
                     ),
             )
     }

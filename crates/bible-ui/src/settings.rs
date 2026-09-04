@@ -44,6 +44,9 @@ pub struct AppSettings {
     pub font_size: u32,
     #[serde(default)]
     pub view_mode: ViewMode,
+    /// When true, sidebar shows Traditional Chinese abbreviations (創／太／羅).
+    #[serde(default)]
+    pub sidebar_abbrev: bool,
 }
 
 fn default_font_size() -> u32 {
@@ -56,6 +59,7 @@ impl Default for AppSettings {
             theme: ThemePreference::Dark,
             font_size: FONT_DEFAULT,
             view_mode: ViewMode::default(),
+            sidebar_abbrev: false,
         }
     }
 }
@@ -450,6 +454,7 @@ mod tests {
             theme: ThemePreference::System,
             font_size: 20,
             view_mode: ViewMode::single(TranslationId::Kjv),
+            sidebar_abbrev: false,
         };
         let json = serde_json::to_string(&settings).expect("serialize");
         assert!(json.contains("system"), "{json}");
@@ -470,6 +475,7 @@ mod tests {
             theme: ThemePreference::Light,
             font_size: 99,
             view_mode: ViewMode::Compare(vec![]),
+            sidebar_abbrev: false,
         }
         .clamp();
         assert_eq!(huge.font_size, FONT_MAX);
@@ -479,6 +485,7 @@ mod tests {
             theme: ThemePreference::Dark,
             font_size: 1,
             view_mode: ViewMode::single(TranslationId::Cuv1919),
+            sidebar_abbrev: false,
         }
         .clamp();
         assert_eq!(tiny.font_size, FONT_MIN);
@@ -495,6 +502,7 @@ mod tests {
             theme: ThemePreference::Light,
             font_size: 22,
             view_mode: ViewMode::single(TranslationId::Cuv1919),
+            sidebar_abbrev: false,
         };
         settings.save_to(&path).expect("save");
         let loaded = AppSettings::load_from(&path);
