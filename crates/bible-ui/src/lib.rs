@@ -726,7 +726,11 @@ impl Render for BibleView {
         let chapter_count = entry.chapter_count;
         let catalog = self.bible.catalog();
         let current_index = self.book_index;
-        let book_short = entry.meta.name_zh_short;
+        let book_chip_label = format!(
+            "{} · {}",
+            entry.meta.testament.label_zh(),
+            entry.meta.name_zh_short,
+        );
         if let Some(n) = self.pending_scroll_verse.take() {
             if let Some(idx) = self.chapter.verses.iter().position(|v| v.number == n) {
                 self.chapter_scroll.scroll_to_top_of_item(idx);
@@ -778,7 +782,7 @@ impl Render for BibleView {
                 lanes_label,
                 current_chapter,
                 chapter_count,
-                book_short,
+                book_chip_label,
                 palette,
                 cx,
             ))
@@ -1021,7 +1025,7 @@ impl BibleView {
         lanes_label: String,
         current_chapter: u32,
         chapter_count: u32,
-        book_short: &'static str,
+        book_chip_label: String,
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1080,7 +1084,7 @@ impl BibleView {
                                     .justify_start()
                                     .child(chip(
                                         "book-picker-btn",
-                                        format!("書 {book_short}"),
+                                        book_chip_label,
                                         self.book_picker_open,
                                         palette,
                                         cx.listener(|this, _, _, cx| {
