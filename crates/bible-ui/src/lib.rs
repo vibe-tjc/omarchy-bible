@@ -3,8 +3,9 @@
 mod settings;
 
 use bible_core::{
-    Bible, BookEntry, Chapter, SearchHit, Testament, TranslationId, VerseUnit, ViewMode,
-    apply_verse_tap, format_selection_summary, format_verse_copy, parse_bible_ref,
+    Bible, BookEntry, Chapter, HebrewWord, SearchHit, Testament, TranslationId, VerseUnit,
+    ViewMode, apply_verse_tap, format_selection_summary, format_verse_copy, morph_pos_label,
+    parse_bible_ref,
 };
 use gpui::{
     App, Application, Bounds, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable,
@@ -38,6 +39,15 @@ actions!(
 const SEARCH_DEBOUNCE_MS: u64 = 180;
 const SEARCH_DISPLAY_CAP: usize = 80;
 const BOOK_GRID_PAGE_SIZE: usize = 16; // 4x4; NT fits in two pages.
+
+/// Exclusive accordion section inside the Hebrew 「詞詳情」 panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HebrewDetailSection {
+    Strongs,
+    Morph,
+    Pos,
+}
+
 
 #[cfg(target_os = "macos")]
 const CJK_FONT_CANDIDATES: &[&str] = &[
@@ -169,6 +179,8 @@ pub struct BibleView {
     hebrew_verse: Option<u32>,
     /// Selected MorphHB word index on the Hebrew annotation page (tap to expand).
     hebrew_word_idx: Option<usize>,
+    /// Which 「詞詳情」 accordion section is open (at most one).
+    hebrew_detail_section: Option<HebrewDetailSection>,
     select_mode: bool,
     selected_verses: BTreeSet<VerseUnit>,
     resolved: ResolvedTheme,
@@ -262,6 +274,7 @@ impl BibleView {
             book_picker_page: 0,
             hebrew_verse: None,
             hebrew_word_idx: None,
+            hebrew_detail_section: None,
             select_mode: false,
             selected_verses: BTreeSet::new(),
             resolved,
@@ -673,6 +686,7 @@ impl BibleView {
     fn open_hebrew_view(&mut self, verse: u32, cx: &mut Context<Self>) {
         self.hebrew_verse = Some(verse);
         self.hebrew_word_idx = None;
+        self.hebrew_detail_section = None;
         self.chapter_picker_open = false;
         self.book_picker_open = false;
         cx.notify();
@@ -684,14 +698,38 @@ impl BibleView {
             self.pending_scroll_verse = Some(n);
         }
         self.hebrew_word_idx = None;
+        self.hebrew_detail_section = None;
         window.focus(&self.focus_handle);
         cx.notify();
     }
 
     fn select_hebrew_word(&mut self, idx: usize, cx: &mut Context<Self>) {
-        self.hebrew_word_idx = match self.hebrew_word_idx {
-            Some(cur) if cur == idx => None,
-            _ => Some(idx),
+        match self.hebrew_word_idx {
+            Some(cur) if cur == idx => {
+                self.hebrew_word_idx = None;
+                self.hebrew_detail_section = None;
+            }
+            _ => {
+                self.hebrew_word_idx = Some(idx);
+                self.hebrew_detail_section = self
+                    .hebrew_verse
+                    .and_then(|n| self.chapter.verses.iter().find(|v| v.number == n))
+                    .and_then(|v| v.hebrew.as_ref())
+                    .and_then(|words| words.get(idx))
+                    .and_then(default_hebrew_detail_section);
+            }
+        }
+        cx.notify();
+    }
+
+    fn toggle_hebrew_detail_section(
+        &mut self,
+        section: HebrewDetailSection,
+        cx: &mut Context<Self>,
+    ) {
+        self.hebrew_detail_section = match self.hebrew_detail_section {
+            Some(cur) if cur == section => None,
+            _ => Some(section),
         };
         cx.notify();
     }
@@ -1198,9 +1236,8 @@ impl BibleView {
             .and_then(|v| v.hebrew.as_ref())
             .cloned()
             .unwrap_or_default();
-        let selected = self
-            .hebrew_word_idx
-            .filter(|&i| i < words.len());
+        let selected = self.hebrew_word_idx.filter(|&i| i < words.len());
+        let open_section = self.hebrew_detail_section;
         let original_line = words
             .iter()
             .map(|w| w.text.as_str())
@@ -1240,29 +1277,79 @@ impl BibleView {
         let detail_panel = selected.and_then(|i| words.get(i)).map(|w| {
             let strongs = w
                 .strongs
-                .as_deref()
+                .as_ref()
+                .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
-                .unwrap_or("—");
+                .map(|s| s.to_string());
             let morph = w
                 .morph
-                .as_deref()
+                .as_ref()
+                .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
-                .unwrap_or("—");
+                .map(|s| s.to_string());
+            let pos = morph
+                .as_deref()
+                .and_then(morph_pos_label)
+                .map(|s| s.to_string());
+
+            let mut rows: Vec<gpui::AnyElement> = Vec::new();
+            if let Some(strongs) = strongs {
+                rows.push(hebrew_accordion_row(
+                    "heb-acc-strongs",
+                    "Strong's",
+                    strongs,
+                    open_section == Some(HebrewDetailSection::Strongs),
+                    true,
+                    palette,
+                    cx.listener(|this, _, _, cx| {
+                        this.toggle_hebrew_detail_section(HebrewDetailSection::Strongs, cx);
+                    }),
+                ));
+            }
+            if let Some(morph) = morph {
+                rows.push(hebrew_accordion_row(
+                    "heb-acc-morph",
+                    "詞形",
+                    morph,
+                    open_section == Some(HebrewDetailSection::Morph),
+                    false,
+                    palette,
+                    cx.listener(|this, _, _, cx| {
+                        this.toggle_hebrew_detail_section(HebrewDetailSection::Morph, cx);
+                    }),
+                ));
+            }
+            if let Some(pos) = pos {
+                rows.push(hebrew_accordion_row(
+                    "heb-acc-pos",
+                    "詞性",
+                    pos,
+                    open_section == Some(HebrewDetailSection::Pos),
+                    false,
+                    palette,
+                    cx.listener(|this, _, _, cx| {
+                        this.toggle_hebrew_detail_section(HebrewDetailSection::Pos, cx);
+                    }),
+                ));
+            }
+
             v_flex()
                 .id("hebrew-word-detail")
-                .w_full()
+                .w(px(280.0))
+                .h_full()
+                .flex_shrink_0()
                 .gap_2()
-                .px_3()
+                .px_4()
                 .py_3()
-                .rounded_md()
-                .bg(rgb(palette.bg_sidebar))
-                .border_1()
+                .border_l_1()
                 .border_color(rgb(palette.border))
+                .bg(rgb(palette.bg_sidebar))
                 .child(
                     div()
-                        .text_xs()
-                        .text_color(rgb(palette.fg_muted))
-                        .child("選中詞"),
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(palette.fg_primary))
+                        .child("詞詳情"),
                 )
                 .child(
                     div()
@@ -1271,47 +1358,85 @@ impl BibleView {
                         .text_color(rgb(palette.fg_primary))
                         .child(w.text.clone()),
                 )
-                .child(
-                    h_flex()
-                        .gap_4()
-                        .flex_wrap()
-                        .child(
-                            v_flex()
-                                .gap_1()
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(rgb(palette.fg_muted))
-                                        .child("Strong's"),
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(rgb(palette.accent))
-                                        .child(strongs.to_string()),
-                                ),
-                        )
-                        .child(
-                            v_flex()
-                                .gap_1()
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(rgb(palette.fg_muted))
-                                        .child("詞形"),
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(rgb(palette.fg_primary))
-                                        .child(morph.to_string()),
-                                ),
-                        ),
-                )
+                .child(v_flex().gap_1().w_full().children(rows))
                 .into_any_element()
         });
+
+        let left_column = v_flex()
+            .id("hebrew-scroll")
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .overflow_y_scroll()
+            .px_6()
+            .py_4()
+            .gap_4()
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(palette.fg_muted))
+                            .child("和合本"),
+                    )
+                    .child(
+                        div()
+                            .text_base()
+                            .text_color(rgb(palette.fg_primary))
+                            .child(zh),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(palette.fg_muted))
+                            .child("KJV"),
+                    )
+                    .child(div().text_base().text_color(rgb(palette.fg)).child(en)),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(palette.fg_muted))
+                            .child("原文"),
+                    )
+                    .child(
+                        div()
+                            .text_lg()
+                            .text_color(rgb(palette.fg_primary))
+                            .child(if original_line.is_empty() {
+                                "（無 MorphHB 資料）".to_string()
+                            } else {
+                                original_line
+                            }),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(palette.fg_muted))
+                            .child("詞對齊（右→左）· 點詞開啟詞詳情"),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .flex_wrap()
+                            .gap_2()
+                            .flex_row_reverse()
+                            .justify_end()
+                            .children(word_chips),
+                    ),
+            );
 
         v_flex()
             .id("hebrew-view")
@@ -1344,83 +1469,16 @@ impl BibleView {
                     .child(div().w(px(64.0))),
             )
             .child(
-                v_flex()
-                    .id("hebrew-scroll")
+                h_flex()
+                    .id("hebrew-body")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .px_6()
-                    .py_4()
-                    .gap_4()
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(palette.fg_muted))
-                                    .child("和合本"),
-                            )
-                            .child(
-                                div()
-                                    .text_base()
-                                    .text_color(rgb(palette.fg_primary))
-                                    .child(zh),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(palette.fg_muted))
-                                    .child("KJV"),
-                            )
-                            .child(div().text_base().text_color(rgb(palette.fg)).child(en)),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(palette.fg_muted))
-                                    .child("原文"),
-                            )
-                            .child(
-                                div()
-                                    .text_lg()
-                                    .text_color(rgb(palette.fg_primary))
-                                    .child(if original_line.is_empty() {
-                                        "（無 MorphHB 資料）".to_string()
-                                    } else {
-                                        original_line
-                                    }),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(palette.fg_muted))
-                                    .child("詞對齊（右→左）· 點詞展開 Strong's / 詞形"),
-                            )
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .flex_wrap()
-                                    .gap_2()
-                                    .flex_row_reverse()
-                                    .justify_end()
-                                    .children(word_chips),
-                            )
-                            .children(detail_panel),
-                    ),
+                    .w_full()
+                    .child(left_column)
+                    .children(detail_panel),
             )
     }
+
 
 
     fn render_select_bar(
@@ -2041,6 +2099,86 @@ impl BibleView {
     }
 }
 
+
+
+fn default_hebrew_detail_section(word: &HebrewWord) -> Option<HebrewDetailSection> {
+    let strongs_ok = word
+        .strongs
+        .as_ref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    if strongs_ok {
+        return Some(HebrewDetailSection::Strongs);
+    }
+    let morph = word.morph.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
+    if morph.is_some() {
+        // 詞形 row is shown whenever morph is present; 詞性 is a derived sibling.
+        return Some(HebrewDetailSection::Morph);
+    }
+    None
+}
+
+fn hebrew_accordion_row(
+    id: &'static str,
+    title: &'static str,
+    body: String,
+    open: bool,
+    accent_body: bool,
+    palette: Palette,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> gpui::AnyElement {
+    let marker = if open { "▼" } else { "▶" };
+    v_flex()
+        .id(id)
+        .w_full()
+        .rounded_md()
+        .border_1()
+        .border_color(rgb(palette.border))
+        .bg(rgb(palette.bg))
+        .child(
+            h_flex()
+                .id((id, 1u64))
+                .w_full()
+                .items_center()
+                .justify_between()
+                .px_3()
+                .py_2()
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(palette.bg_hover)))
+                .on_click(on_click)
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(palette.fg_primary))
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(palette.fg_muted))
+                        .child(marker),
+                ),
+        )
+        .when(open, |d| {
+            d.child(
+                div()
+                    .px_3()
+                    .pb_2()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(if accent_body {
+                        palette.accent
+                    } else {
+                        palette.fg_primary
+                    }))
+                    .child(body),
+            )
+        })
+        .into_any_element()
+}
+
+
 fn chip(
     id: impl Into<gpui::ElementId>,
     label: impl Into<SharedString>,
@@ -2202,4 +2340,26 @@ fn verse_block(
             col
         })
         .child(v_flex().flex_1().min_w_0().gap_1().children(lanes_ui))
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::morph_pos_label;
+
+    #[test]
+    fn morph_pos_label_from_prefix() {
+        assert_eq!(morph_pos_label("HNcmpa"), Some("名詞"));
+        assert_eq!(morph_pos_label("HVqp3ms"), Some("動詞"));
+        assert_eq!(morph_pos_label("HAamsa"), Some("形容詞"));
+        assert_eq!(morph_pos_label("HR/Ncfsa"), Some("名詞"));
+        assert_eq!(morph_pos_label("HC/To"), Some("助詞"));
+        assert_eq!(morph_pos_label("HTd/Ncmpa"), Some("名詞"));
+        assert_eq!(morph_pos_label("HR/Ncmsc/Sp3ms"), Some("名詞"));
+        assert_eq!(morph_pos_label("HC"), Some("連接詞"));
+        assert_eq!(morph_pos_label(""), None);
+        assert_eq!(morph_pos_label("   "), None);
+        assert_eq!(morph_pos_label("HXx"), None);
+    }
 }
