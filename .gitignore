@@ -9,3 +9,6 @@ data/raw/
 
 # MorphHB per-book JSON is an import artifact; runtime embeds morphhb-ot.json.gz
 data/he/*.json
+
+# Local packaging output
+dist/

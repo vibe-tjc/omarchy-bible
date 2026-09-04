@@ -13,9 +13,11 @@ yay -S omarchy-bible-bin
 或從 GitHub Release 下載：
 
 - Linux：`omarchy-bible-VERSION-x86_64.tar.gz`（binary + `.desktop` + `LICENSE`）
-- macOS Apple Silicon：`omarchy-bible-VERSION-macos-arm64.tar.gz`（binary + `LICENSE`）
+- macOS Apple Silicon：
+  - `omarchy-bible-VERSION-macos-arm64.dmg` — 建議：拖曳 `Omarchy Bible.app`（顯示名稱「聖經」）到 Applications。**未簽名**：下載後請在 Finder 對 DMG／App **右鍵 → 打開**（勿雙擊，否則 Gatekeeper 可能直接擋）。
+  - `omarchy-bible-VERSION-macos-arm64.tar.gz` — 裸 binary + `LICENSE`（給 CLI／腳本用）
 
-把 `omarchy-bible` 放到 `PATH`。`.desktop` 只給 Linux 包裝用。
+Linux：把 `omarchy-bible` 放到 `PATH`。`.desktop` 只給 Linux 包裝用。macOS 優先用 DMG 裝 `.app`；tar.gz 仍是裸 binary。
 
 ## 發一版
 
@@ -29,8 +31,8 @@ git push origin v0.2.0
 
 3. Action 會：
    - 在 Ubuntu 22.04 編 `cargo build --release -p omarchy-bible`（glibc 比 Arch 舊，Arch 上跑沒問題），以 `packaging/scripts/package-linux.sh` 打成 `omarchy-bible-VERSION-x86_64.tar.gz`
-   - 在 `macos-latest`（arm64）編同一指令，以 `packaging/scripts/package-macos.sh` 打成 `omarchy-bible-VERSION-macos-arm64.tar.gz`
-   - 兩個 job 把資產附到同一個 GitHub Release（Linux 另附 `SHA256SUMS`，macOS 另附 `SHA256SUMS-macos-arm64`）
+   - 在 `macos-latest`（arm64）編同一指令，以 `packaging/scripts/package-macos.sh` 打成 `Omarchy Bible.app`、`omarchy-bible-VERSION-macos-arm64.dmg`（`create-dmg`，否則 `hdiutil`）與 `omarchy-bible-VERSION-macos-arm64.tar.gz`。未簽名／未 notarize。
+   - 兩個 job 把資產附到同一個 GitHub Release（Linux 另附 `SHA256SUMS`，macOS 另附 tar.gz + DMG + `SHA256SUMS-macos-arm64`）
    - 若 repo 有設 AUR secrets，再更新 AUR 的 `omarchy-bible-bin`（僅 Linux 資產）
 
 手動重跑：Actions → Release → Run workflow。
@@ -56,6 +58,18 @@ SHA=$(sha256sum dist/omarchy-bible-${VERSION}-x86_64.tar.gz | cut -d' ' -f1)
 sed -e "s/@PKGVER@/${VERSION}/g" -e "s/@SHA256@/${SHA}/g" \
   packaging/omarchy-bible-bin/PKGBUILD.in
 ```
+
+## macOS `.app` / DMG（本機）
+
+```bash
+cargo build --release -p omarchy-bible
+bash packaging/scripts/package-macos.sh 0.2.0 target/release/omarchy-bible
+# dist/Omarchy Bible.app
+# dist/omarchy-bible-0.2.0-macos-arm64.dmg
+# dist/omarchy-bible-0.2.0-macos-arm64.tar.gz
+```
+
+資產在 `packaging/macos/`（`Info.plist`、placeholder `AppIcon.icns`）。Bundle id：`dev.vibe-tjc.omarchy-bible`。需要 Fancy DMG 版面時：`brew install create-dmg`。
 
 ## 執行期依賴
 
