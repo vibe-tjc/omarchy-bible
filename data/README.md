@@ -12,3 +12,8 @@
 未轉換的原始 dump 請放 `data/raw/`（已 gitignore）。
 
 **未收錄** 新標點和合本（CUNP）；該譯本受香港聖經公會／聯合聖經公會著作權保護。
+
+## Hebrew / MorphHB
+
+- `he/Gen.json` — Genesis 1 MorphHB sample (`[hebrew, H####, morph]` words). See `he/README.md` for expand-via-remapVerses instructions.
+

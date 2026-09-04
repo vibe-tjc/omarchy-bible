@@ -1,8 +1,10 @@
 //! Core types, 66-book catalog, and offline CUV 神版 + KJV store.
 
 mod catalog;
+mod hebrew;
 
 pub use catalog::{BibleRef, BookMeta, CANON, Testament, lookup_canon, parse_bible_ref};
+pub use hebrew::{HebrewWord, hebrew_verse, has_hebrew_notes};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -122,6 +124,8 @@ impl ViewMode {
 pub struct Verse {
     pub number: u32,
     pub texts: Vec<(TranslationId, String)>,
+    /// MorphHB words in Hebrew reading order; `None` for NT or chapters without data.
+    pub hebrew: Option<Vec<HebrewWord>>,
     /// Precomputed lowercase of non-CJK lanes (same ids as in `texts`).
     folded: Vec<(TranslationId, String)>,
 }
@@ -136,6 +140,7 @@ impl Verse {
         Self {
             number,
             texts,
+            hebrew: None,
             folded,
         }
     }
@@ -416,6 +421,7 @@ impl Bible {
             return Err(LoadError::Empty);
         }
         let meta = book.entry.meta;
+        let verses = attach_hebrew(meta.osis, chapter, verses);
         Ok(Chapter {
             book: meta.osis.to_string(),
             book_id: meta.book_id,
@@ -531,6 +537,26 @@ fn truncate_chars(chars: &[char], max: usize) -> String {
     let mut out: String = chars[..max].iter().collect();
     out.push('…');
     out
+}
+
+fn attach_hebrew(book: &str, chapter: u32, verses: Arc<[Verse]>) -> Arc<[Verse]> {
+    let mut changed = false;
+    let enriched: Vec<Verse> = verses
+        .iter()
+        .map(|v| {
+            let mut cloned = v.clone();
+            cloned.hebrew = hebrew::hebrew_verse(book, chapter, v.number);
+            if cloned.hebrew.is_some() {
+                changed = true;
+            }
+            cloned
+        })
+        .collect();
+    if changed {
+        enriched.into()
+    } else {
+        verses
+    }
 }
 
 /// Load the embedded 66-book CUV 神版 + KJV store.
@@ -653,18 +679,22 @@ fn load_aligned_json(json: &str) -> Result<Chapter, LoadError> {
     if file.verses.is_empty() {
         return Err(LoadError::Empty);
     }
+    let book = file.book;
+    let chapter = file.chapter;
+    let verses: Arc<[Verse]> = file
+        .verses
+        .into_iter()
+        .map(|v| Verse::bilingual(v.number, v.zh, v.en))
+        .collect::<Vec<_>>()
+        .into();
+    let verses = attach_hebrew(&book, chapter, verses);
     Ok(Chapter {
-        book: file.book,
+        book,
         book_id: file.book_id,
         book_name_zh: file.book_name_zh,
         book_name_en: file.book_name_en,
-        chapter: file.chapter,
-        verses: file
-            .verses
-            .into_iter()
-            .map(|v| Verse::bilingual(v.number, v.zh, v.en))
-            .collect::<Vec<_>>()
-            .into(),
+        chapter,
+        verses,
     })
 }
 
@@ -1232,9 +1262,26 @@ mod tests {
     #[test]
     fn chapter_verses_are_shared_arc() {
         let bible = load_bible().expect("bible");
-        let a = bible.load_chapter_at(0, 1).unwrap();
-        let b = bible.load_chapter_at(0, 1).unwrap();
+        // Gen 2 has no MorphHB sample, so the store Arc is reused.
+        let a = bible.load_chapter_at(0, 2).unwrap();
+        let b = bible.load_chapter_at(0, 2).unwrap();
         assert!(Arc::ptr_eq(&a.verses, &b.verses));
-        assert_eq!(a.verses.len(), 31);
+        assert!(!a.verses.is_empty());
+        let g1a = bible.load_chapter_at(0, 1).unwrap();
+        let g1b = bible.load_chapter_at(0, 1).unwrap();
+        assert_eq!(g1a.verses.len(), 31);
+        assert!(g1a.verses[0].hebrew.is_some());
+        assert_eq!(g1a.verses[0].hebrew, g1b.verses[0].hebrew);
+    }
+
+    #[test]
+    fn genesis_1_verses_expose_hebrew_marker() {
+        let chapter = load_bible().unwrap().load_chapter("Gen", 1).unwrap();
+        assert!(has_hebrew_notes("Gen", 1, 1));
+        assert!(chapter.verses[0].hebrew.is_some());
+        assert!(chapter.verses[30].hebrew.is_some());
+        assert_eq!(chapter.verses.iter().filter(|v| v.hebrew.is_some()).count(), 31);
+        let john = load_bible().unwrap().load_chapter("John", 3).unwrap();
+        assert!(john.verses.iter().all(|v| v.hebrew.is_none()));
     }
 }

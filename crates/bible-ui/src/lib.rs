@@ -1,4 +1,4 @@
-//! GPUI Bible view: 66-book sidebar + translation-lane chapter pane.
+//! GPUI Bible view: top-bar book picker + translation-lane chapter pane.
 
 mod settings;
 
@@ -37,6 +37,7 @@ actions!(
 
 const SEARCH_DEBOUNCE_MS: u64 = 180;
 const SEARCH_DISPLAY_CAP: usize = 80;
+const BOOK_GRID_PAGE_SIZE: usize = 16; // 4x4; NT fits in two pages.
 
 #[cfg(target_os = "macos")]
 const CJK_FONT_CANDIDATES: &[&str] = &[
@@ -162,6 +163,10 @@ pub struct BibleView {
     pending_scroll_verse: Option<u32>,
     chapter_scroll: ScrollHandle,
     chapter_picker_open: bool,
+    book_picker_open: bool,
+    book_picker_testament: Testament,
+    book_picker_page: usize,
+    hebrew_verse: Option<u32>,
     select_mode: bool,
     selected_verses: BTreeSet<VerseUnit>,
     resolved: ResolvedTheme,
@@ -250,6 +255,10 @@ impl BibleView {
             pending_scroll_verse: None,
             chapter_scroll: ScrollHandle::new(),
             chapter_picker_open: false,
+            book_picker_open: false,
+            book_picker_testament: Testament::Old,
+            book_picker_page: 0,
+            hebrew_verse: None,
             select_mode: false,
             selected_verses: BTreeSet::new(),
             resolved,
@@ -326,6 +335,7 @@ impl BibleView {
             self.pending_scroll_verse = highlight;
             self.selected_verses.clear();
             self.chapter_picker_open = false;
+            self.book_picker_open = false;
             cx.notify();
         }
     }
@@ -383,8 +393,18 @@ impl BibleView {
     }
 
     fn close_settings(&mut self, _: &CloseSettings, window: &mut Window, cx: &mut Context<Self>) {
+        if self.hebrew_verse.is_some() {
+            self.close_hebrew_view(window, cx);
+            return;
+        }
         if self.select_mode {
             self.exit_select_mode(cx);
+            return;
+        }
+        if self.book_picker_open {
+            self.book_picker_open = false;
+            window.focus(&self.focus_handle);
+            cx.notify();
             return;
         }
         if self.chapter_picker_open {
@@ -592,13 +612,74 @@ impl BibleView {
         cx.notify();
     }
 
-    fn toggle_sidebar_abbrev(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.settings.sidebar_abbrev = !self.settings.sidebar_abbrev;
-        self.persist_and_refresh(Some(window), cx);
-    }
-
     fn toggle_chapter_picker(&mut self, cx: &mut Context<Self>) {
         self.chapter_picker_open = !self.chapter_picker_open;
+        if self.chapter_picker_open {
+            self.book_picker_open = false;
+        }
+        cx.notify();
+    }
+
+    fn open_book_picker(&mut self, cx: &mut Context<Self>) {
+        if self.book_picker_open {
+            self.book_picker_open = false;
+            cx.notify();
+            return;
+        }
+        let entry = self.current_entry();
+        self.book_picker_testament = entry.meta.testament;
+        let books: Vec<_> = self
+            .bible
+            .catalog()
+            .into_iter()
+            .filter(|e| e.meta.testament == self.book_picker_testament)
+            .collect();
+        let pos = books
+            .iter()
+            .position(|e| e.index == self.book_index)
+            .unwrap_or(0);
+        self.book_picker_page = pos / BOOK_GRID_PAGE_SIZE;
+        self.book_picker_open = true;
+        self.chapter_picker_open = false;
+        cx.notify();
+    }
+
+    fn set_book_picker_testament(&mut self, testament: Testament, cx: &mut Context<Self>) {
+        self.book_picker_testament = testament;
+        self.book_picker_page = 0;
+        cx.notify();
+    }
+
+    fn book_picker_page_count(&self) -> usize {
+        let n = self
+            .bible
+            .catalog()
+            .into_iter()
+            .filter(|e| e.meta.testament == self.book_picker_testament)
+            .count();
+        n.div_ceil(BOOK_GRID_PAGE_SIZE).max(1)
+    }
+
+    fn shift_book_picker_page(&mut self, delta: i32, cx: &mut Context<Self>) {
+        let pages = self.book_picker_page_count() as i32;
+        let next = (self.book_picker_page as i32 + delta).rem_euclid(pages) as usize;
+        self.book_picker_page = next;
+        cx.notify();
+    }
+
+    fn open_hebrew_view(&mut self, verse: u32, cx: &mut Context<Self>) {
+        self.hebrew_verse = Some(verse);
+        self.chapter_picker_open = false;
+        self.book_picker_open = false;
+        cx.notify();
+    }
+
+    fn close_hebrew_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(n) = self.hebrew_verse.take() {
+            self.highlight_verse = Some(n);
+            self.pending_scroll_verse = Some(n);
+        }
+        window.focus(&self.focus_handle);
         cx.notify();
     }
 
@@ -639,13 +720,13 @@ impl Focusable for BibleView {
 impl Render for BibleView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let chapter = &self.chapter;
-        let title = chapter.title_zh();
         let lanes_label = self.settings.view_mode.header_label();
         let current_chapter = chapter.chapter;
         let entry = self.current_entry();
         let chapter_count = entry.chapter_count;
         let catalog = self.bible.catalog();
         let current_index = self.book_index;
+        let book_short = entry.meta.name_zh_short;
         if let Some(n) = self.pending_scroll_verse.take() {
             if let Some(idx) = self.chapter.verses.iter().position(|v| v.number == n) {
                 self.chapter_scroll.scroll_to_top_of_item(idx);
@@ -661,7 +742,23 @@ impl Render for BibleView {
             "omarchy_bible"
         };
 
-        h_flex()
+        if self.hebrew_verse.is_some() {
+            return div()
+                .id("bible-root")
+                .relative()
+                .key_context(key_ctx)
+                .track_focus(&self.focus_handle)
+                .on_action(cx.listener(Self::quit))
+                .on_action(cx.listener(Self::close_settings))
+                .size_full()
+                .bg(rgb(palette.bg))
+                .text_color(rgb(palette.fg))
+                .font_family(self.font_family.clone())
+                .child(self.render_hebrew_view(palette, cx))
+                .into_any_element();
+        }
+
+        div()
             .id("bible-root")
             .relative()
             .key_context(key_ctx)
@@ -677,12 +774,11 @@ impl Render for BibleView {
             .bg(rgb(palette.bg))
             .text_color(rgb(palette.fg))
             .font_family(self.font_family.clone())
-            .child(self.render_sidebar(&catalog, current_index, palette, cx))
             .child(self.render_main(
-                title,
                 lanes_label,
                 current_chapter,
                 chapter_count,
+                book_short,
                 palette,
                 cx,
             ))
@@ -700,114 +796,232 @@ impl Render for BibleView {
                     cx,
                 ))
             })
+            .when(self.book_picker_open, |d| {
+                d.child(self.render_book_picker_overlay(&catalog, current_index, palette, cx))
+            })
+            .into_any_element()
     }
 }
 
 impl BibleView {
-    fn render_sidebar(
+
+    fn render_book_picker_overlay(
         &self,
         catalog: &[BookEntry],
         current_index: usize,
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let abbrev = self.settings.sidebar_abbrev;
-        let mut items: Vec<gpui::AnyElement> = Vec::new();
-        let mut last_testament: Option<Testament> = None;
+        let testament = self.book_picker_testament;
+        let books: Vec<&BookEntry> = catalog
+            .iter()
+            .filter(|e| e.meta.testament == testament)
+            .collect();
+        let pages = books.len().div_ceil(BOOK_GRID_PAGE_SIZE).max(1);
+        let page = self.book_picker_page.min(pages - 1);
+        let start = page * BOOK_GRID_PAGE_SIZE;
+        let page_books = books
+            .into_iter()
+            .skip(start)
+            .take(BOOK_GRID_PAGE_SIZE)
+            .collect::<Vec<_>>();
 
-        for entry in catalog {
-            if last_testament != Some(entry.meta.testament) {
-                last_testament = Some(entry.meta.testament);
-                items.push(
-                    div()
-                        .pt_3()
-                        .pb_1()
-                        .text_xs()
-                        .text_color(rgb(palette.fg_muted))
-                        .child(entry.meta.testament.label_zh())
-                        .into_any_element(),
-                );
-            }
-
-            let index = entry.index;
-            let is_current = index == current_index;
-            let label = if abbrev {
-                entry.meta.name_zh_short
-            } else {
-                entry.meta.name_zh
-            };
-            let full_name = entry.meta.name_zh;
-            let mut row = div()
-                .id(("book", index))
-                .w_full()
-                .px_3()
-                .py_1()
-                .rounded_md()
-                .when(is_current, |d| {
-                    d.bg(rgb(palette.bg_hover)).text_color(rgb(palette.accent))
-                })
-                .when(!is_current, |d| d.hover(|s| s.bg(rgb(palette.bg_hover))))
-                .on_click(cx.listener(move |this, event, window, cx| {
-                    this.on_book_click(index, event, window, cx);
-                }))
-                .child(label);
-            if abbrev {
-                row = row.tooltip(move |window, cx| Tooltip::new(full_name).build(window, cx));
-            }
-            items.push(row.into_any_element());
+        let mut cells: Vec<gpui::AnyElement> = page_books
+            .into_iter()
+            .map(|entry| {
+                let index = entry.index;
+                let is_current = index == current_index;
+                let short = entry.meta.name_zh_short;
+                let full = entry.meta.name_zh;
+                div()
+                    .id(("picker-book", index))
+                    .w(px(72.0))
+                    .h(px(44.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_md()
+                    .text_sm()
+                    .when(is_current, |d| {
+                        d.bg(rgb(palette.bg_hover)).text_color(rgb(palette.accent))
+                    })
+                    .when(!is_current, |d| {
+                        d.text_color(rgb(palette.fg_muted))
+                            .hover(|s| s.bg(rgb(palette.bg_hover)))
+                    })
+                    .tooltip(move |window, cx| Tooltip::new(full).build(window, cx))
+                    .on_click(cx.listener(move |this, event, window, cx| {
+                        this.book_picker_open = false;
+                        this.on_book_click(index, event, window, cx);
+                    }))
+                    .child(short)
+                    .into_any_element()
+            })
+            .collect();
+        while cells.len() < BOOK_GRID_PAGE_SIZE {
+            let pad = cells.len();
+            cells.push(
+                div()
+                    .id(("picker-book-pad", pad))
+                    .w(px(72.0))
+                    .h(px(44.0))
+                    .into_any_element(),
+            );
         }
 
-        let sidebar_w = if abbrev { px(100.0) } else { px(220.0) };
+        let dots: Vec<gpui::AnyElement> = (0..pages)
+            .map(|i| {
+                let active = i == page;
+                div()
+                    .id(("book-page-dot", i))
+                    .w(px(8.0))
+                    .h(px(8.0))
+                    .rounded_md()
+                    .bg(rgb(if active {
+                        palette.accent
+                    } else {
+                        palette.border
+                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.book_picker_page = i;
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            })
+            .collect();
 
-        v_flex()
-            .w(sidebar_w)
-            .h_full()
-            .bg(rgb(palette.bg_sidebar))
-            .border_r_1()
-            .border_color(rgb(palette.border))
-            .child(
-                h_flex()
-                    .w_full()
-                    .items_center()
-                    .justify_between()
-                    .px_3()
-                    .pt_4()
-                    .pb_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(palette.fg_muted))
-                            .child("書卷"),
-                    )
-                    .child(chip(
-                        "sidebar-abbrev-toggle",
-                        if abbrev { "全名" } else { "簡稱" },
-                        abbrev,
-                        palette,
-                        cx.listener(|this, _, window, cx| {
-                            this.toggle_sidebar_abbrev(window, cx);
-                        }),
-                    )),
+        div()
+            .id("book-picker-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .flex_col()
+            .items_center()
+            .pt(px(96.0))
+            .bg(rgba(0x00000066))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.book_picker_open = false;
+                    window.focus(&this.focus_handle);
+                    cx.notify();
+                }),
             )
             .child(
                 v_flex()
-                    .id("book-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .px_3()
-                    .pb_4()
-                    .gap_1()
-                    .children(items),
+                    .id("book-picker-panel")
+                    .w(px(360.0))
+                    .bg(rgb(palette.bg_sidebar))
+                    .border_1()
+                    .border_color(rgb(palette.border))
+                    .rounded_md()
+                    .px_4()
+                    .py_3()
+                    .gap_3()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(palette.fg_primary))
+                                    .child("選擇書卷"),
+                            )
+                            .child(chip(
+                                "book-picker-close",
+                                "關閉",
+                                false,
+                                palette,
+                                cx.listener(|this, _, window, cx| {
+                                    this.book_picker_open = false;
+                                    window.focus(&this.focus_handle);
+                                    cx.notify();
+                                }),
+                            )),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(chip(
+                                "book-tab-ot",
+                                "舊約",
+                                testament == Testament::Old,
+                                palette,
+                                cx.listener(|this, _, _, cx| {
+                                    this.set_book_picker_testament(Testament::Old, cx);
+                                }),
+                            ))
+                            .child(chip(
+                                "book-tab-nt",
+                                "新約",
+                                testament == Testament::New,
+                                palette,
+                                cx.listener(|this, _, _, cx| {
+                                    this.set_book_picker_testament(Testament::New, cx);
+                                }),
+                            )),
+                    )
+                    .child({
+                        let mut cell_iter = cells.into_iter();
+                        let mut rows: Vec<gpui::AnyElement> = Vec::new();
+                        for r in 0usize..4 {
+                            let row_cells: Vec<gpui::AnyElement> =
+                                (0..4).filter_map(|_| cell_iter.next()).collect();
+                            rows.push(
+                                h_flex()
+                                    .id(("book-grid-row", r as usize))
+                                    .w_full()
+                                    .gap_1()
+                                    .justify_between()
+                                    .children(row_cells)
+                                    .into_any_element(),
+                            );
+                        }
+                        v_flex()
+                            .id("book-picker-grid")
+                            .w_full()
+                            .gap_1()
+                            .children(rows)
+                    })
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_center()
+                            .gap_3()
+                            .child(nav_button(
+                                "book-page-prev",
+                                "‹",
+                                palette,
+                                cx.listener(|this, _, _, cx| {
+                                    this.shift_book_picker_page(-1, cx);
+                                }),
+                            ))
+                            .child(h_flex().gap_1().items_center().children(dots))
+                            .child(nav_button(
+                                "book-page-next",
+                                "›",
+                                palette,
+                                cx.listener(|this, _, _, cx| {
+                                    this.shift_book_picker_page(1, cx);
+                                }),
+                            )),
+                    ),
             )
     }
 
     fn render_main(
         &self,
-        title: String,
         lanes_label: String,
         current_chapter: u32,
         chapter_count: u32,
+        book_short: &'static str,
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -844,29 +1058,65 @@ impl BibleView {
             .flex_1()
             .h_full()
             .min_w_0()
+            .w_full()
             .child(
                 v_flex()
                     .px_6()
-                    .py_4()
+                    .py_3()
                     .gap_2()
                     .border_b_1()
                     .border_color(rgb(palette.border))
                     .child(
                         h_flex()
                             .w_full()
-                            .items_start()
-                            .justify_between()
-                            .gap_3()
+                            .items_center()
+                            .gap_2()
+                            .flex_nowrap()
                             .child(
-                                div()
+                                h_flex()
                                     .flex_1()
                                     .min_w_0()
-                                    .text_xl()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(rgb(palette.fg_primary))
-                                    .child(title),
+                                    .items_center()
+                                    .justify_start()
+                                    .child(chip(
+                                        "book-picker-btn",
+                                        format!("書 {book_short}"),
+                                        self.book_picker_open,
+                                        palette,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.open_book_picker(cx);
+                                        }),
+                                    )),
                             )
-                            .child(self.render_header_controls(palette, cx)),
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .gap_2()
+                                    .flex_shrink_0()
+                                    .child(self.render_chapter_nav(
+                                        current_chapter,
+                                        chapter_count,
+                                        palette,
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .items_center()
+                                    .justify_end()
+                                    .gap_2()
+                                    .flex_nowrap()
+                                    .child(self.render_header_controls(palette, cx)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(palette.fg_muted))
+                            .child(lanes_label),
                     )
                     .child(
                         h_flex()
@@ -875,16 +1125,8 @@ impl BibleView {
                             .gap_2()
                             .child(
                                 div()
-                                    .text_sm()
-                                    .text_color(rgb(palette.fg_muted))
-                                    .flex_shrink_0()
-                                    .child(lanes_label),
-                            )
-                            .child(
-                                div()
                                     .flex_1()
-                                    .min_w(px(160.0))
-                                    .max_w(px(280.0))
+                                    .min_w_0()
                                     .child(Input::new(&self.jump_input).cleanable(true).w_full()),
                             )
                             .child(chip(
@@ -896,8 +1138,7 @@ impl BibleView {
                                     this.submit_jump(window, cx);
                                 }),
                             )),
-                    )
-                    .child(self.render_chapter_nav(current_chapter, chapter_count, palette, cx)),
+                    ),
             )
             .child(
                 v_flex()
@@ -916,7 +1157,147 @@ impl BibleView {
             })
     }
 
-    fn render_select_bar(&self, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_hebrew_view(&self, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let verse_no = self.hebrew_verse.unwrap_or(1);
+        let entry = self.current_entry();
+        let title = format!(
+            "{} {}:{} · 希伯來文",
+            entry.meta.name_zh, self.chapter.chapter, verse_no
+        );
+        let verse = self
+            .chapter
+            .verses
+            .iter()
+            .find(|v| v.number == verse_no);
+        let zh = verse
+            .and_then(|v| v.get(TranslationId::Cuv1919))
+            .unwrap_or("")
+            .to_string();
+        let en = verse
+            .and_then(|v| v.get(TranslationId::Kjv))
+            .unwrap_or("")
+            .to_string();
+        let words = verse
+            .and_then(|v| v.hebrew.as_ref())
+            .cloned()
+            .unwrap_or_default();
+
+        let word_chips: Vec<gpui::AnyElement> = words
+            .into_iter()
+            .enumerate()
+            .map(|(i, w)| {
+                let label = w.text.clone();
+                let tip = match (&w.strongs, &w.morph) {
+                    (Some(s), Some(m)) => format!("{s} · {m}"),
+                    (Some(s), None) => s.clone(),
+                    (None, Some(m)) => m.clone(),
+                    _ => "MorphHB".to_string(),
+                };
+                div()
+                    .id(("heb-word", i))
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(palette.bg_hover))
+                    .text_lg()
+                    .text_color(rgb(palette.fg_primary))
+                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                    .on_click(|_, _, _| {})
+                    .child(label)
+                    .into_any_element()
+            })
+            .collect();
+
+        v_flex()
+            .id("hebrew-view")
+            .size_full()
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .px_6()
+                    .py_3()
+                    .border_b_1()
+                    .border_color(rgb(palette.border))
+                    .child(chip(
+                        "hebrew-back",
+                        "返回",
+                        false,
+                        palette,
+                        cx.listener(|this, _, window, cx| {
+                            this.close_hebrew_view(window, cx);
+                        }),
+                    ))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(palette.fg_primary))
+                            .child(title),
+                    )
+                    .child(div().w(px(64.0))),
+            )
+            .child(
+                v_flex()
+                    .id("hebrew-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_6()
+                    .py_4()
+                    .gap_4()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(palette.fg_muted))
+                                    .child("和合本"),
+                            )
+                            .child(
+                                div()
+                                    .text_base()
+                                    .text_color(rgb(palette.fg_primary))
+                                    .child(zh),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(palette.fg_muted))
+                                    .child("KJV"),
+                            )
+                            .child(div().text_base().text_color(rgb(palette.fg)).child(en)),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(palette.fg_muted))
+                                    .child("原文詞序（右→左）· 點詞稍後可看 Strong's / 詞形"),
+                            )
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .flex_wrap()
+                                    .gap_2()
+                                    .flex_row_reverse()
+                                    .justify_end()
+                                    .children(word_chips),
+                            ),
+                    ),
+            )
+    }
+
+    fn render_select_bar(
+&self, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let units: Vec<VerseUnit> = self.selected_verses.iter().copied().collect();
         let summary = format_selection_summary(&self.chapter, &units);
         h_flex()
@@ -971,7 +1352,7 @@ impl BibleView {
         h_flex()
             .items_center()
             .gap_2()
-            .flex_wrap()
+            .flex_nowrap()
             .child(
                 h_flex()
                     .gap_1()
@@ -1052,7 +1433,6 @@ impl BibleView {
     ) -> impl IntoElement {
         let picker_open = self.chapter_picker_open;
         h_flex()
-            .w_full()
             .items_center()
             .gap_2()
             .child(nav_button(
@@ -1262,40 +1642,6 @@ impl BibleView {
                                         palette,
                                         cx.listener(|this, _, window, cx| {
                                             this.set_font_size(FONT_LARGE, window, cx);
-                                        }),
-                                    )),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(palette.fg_muted))
-                                    .child("側邊欄書名"),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(chip(
-                                        "settings-book-full",
-                                        "全名",
-                                        !self.settings.sidebar_abbrev,
-                                        palette,
-                                        cx.listener(|this, _, window, cx| {
-                                            this.settings.sidebar_abbrev = false;
-                                            this.persist_and_refresh(Some(window), cx);
-                                        }),
-                                    ))
-                                    .child(chip(
-                                        "settings-book-short",
-                                        "簡稱",
-                                        self.settings.sidebar_abbrev,
-                                        palette,
-                                        cx.listener(|this, _, window, cx| {
-                                            this.settings.sidebar_abbrev = true;
-                                            this.persist_and_refresh(Some(window), cx);
                                         }),
                                     )),
                             ),
@@ -1667,7 +2013,7 @@ fn verse_block(
                 .rounded_md()
                 .when(lane_selected, |d| d.bg(rgb(palette.bg_hover)).px_1())
                 .when(select_mode, |d| {
-                    d.cursor_pointer()
+                    d
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.on_verse_select(n, id, cx);
                         }))
@@ -1689,18 +2035,44 @@ fn verse_block(
         .when(highlighted || any_selected, |d| {
             d.bg(rgb(palette.bg_hover)).px_2().py_1()
         })
-        .child(
-            div()
+         .child({
+            let show_dagger = verse.hebrew.as_ref().is_some_and(|w| !w.is_empty());
+            let mut col = v_flex()
                 .w(px((num_size * 2.2).max(28.0)))
                 .pt(px(4.0))
-                .text_size(px(num_size))
-                .font_weight(if highlighted || any_selected {
-                    FontWeight::SEMIBOLD
-                } else {
-                    FontWeight::NORMAL
-                })
-                .text_color(rgb(palette.accent))
-                .child(format!("{}", verse.number)),
-        )
+                .gap_1()
+                .items_center()
+                .child(
+                    div()
+                        .text_size(px(num_size))
+                        .font_weight(if highlighted || any_selected {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .text_color(rgb(palette.accent))
+                        .child(format!("{}", verse.number)),
+                );
+            if show_dagger {
+                col = col.child(
+                    div()
+                        .id(("heb-marker", n as usize))
+                        .px_1()
+                        .rounded_sm()
+                        .text_sm()
+                        .text_color(rgb(palette.accent))
+                        .hover(|s| s.bg(rgb(palette.bg_hover)))
+                        
+                        .tooltip(|window, cx| {
+                            Tooltip::new("希伯來文形態").build(window, cx)
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_hebrew_view(n, cx);
+                        }))
+                        .child("†"),
+                );
+            }
+            col
+        })
         .child(v_flex().flex_1().min_w_0().gap_1().children(lanes_ui))
 }

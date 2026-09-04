@@ -3,7 +3,7 @@ name = "bible-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "GPUI 66-book sidebar and bilingual chapter view"
+description = "GPUI top-bar book/chapter pickers and bilingual chapter view"
 publish = false
 
 [dependencies]

@@ -25,10 +25,11 @@ macOS（Apple Silicon）可直接 `cargo run -p omarchy-bible`；CI 的 `macos-l
 
 ```
 crates/bible-core     資料模型、66 卷目錄、章節載入、經文搜尋、測試
-crates/bible-ui       GPUI：側邊欄、閱讀區、設定、搜尋
+crates/bible-ui       GPUI：頂欄書卷/章節選擇、閱讀區、設定、搜尋、希伯來文 stub
 crates/omarchy-bible  桌面程式進入點
 data/cuv-kjv.json     對齊後的全書（神版 + KJV，編譯時嵌入）
 data/genesis-1.json   創世記 1 快照
+data/he/              MorphHB 樣本（Gen 1）
 resources/            Linux `.desktop` 等包裝檔（macOS 不使用）
 ```
 
