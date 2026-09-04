@@ -167,6 +167,8 @@ pub struct BibleView {
     book_picker_testament: Testament,
     book_picker_page: usize,
     hebrew_verse: Option<u32>,
+    /// Selected MorphHB word index on the Hebrew annotation page (tap to expand).
+    hebrew_word_idx: Option<usize>,
     select_mode: bool,
     selected_verses: BTreeSet<VerseUnit>,
     resolved: ResolvedTheme,
@@ -259,6 +261,7 @@ impl BibleView {
             book_picker_testament: Testament::Old,
             book_picker_page: 0,
             hebrew_verse: None,
+            hebrew_word_idx: None,
             select_mode: false,
             selected_verses: BTreeSet::new(),
             resolved,
@@ -669,6 +672,7 @@ impl BibleView {
 
     fn open_hebrew_view(&mut self, verse: u32, cx: &mut Context<Self>) {
         self.hebrew_verse = Some(verse);
+        self.hebrew_word_idx = None;
         self.chapter_picker_open = false;
         self.book_picker_open = false;
         cx.notify();
@@ -679,7 +683,16 @@ impl BibleView {
             self.highlight_verse = Some(n);
             self.pending_scroll_verse = Some(n);
         }
+        self.hebrew_word_idx = None;
         window.focus(&self.focus_handle);
+        cx.notify();
+    }
+
+    fn select_hebrew_word(&mut self, idx: usize, cx: &mut Context<Self>) {
+        self.hebrew_word_idx = match self.hebrew_word_idx {
+            Some(cur) if cur == idx => None,
+            _ => Some(idx),
+        };
         cx.notify();
     }
 
@@ -1185,32 +1198,120 @@ impl BibleView {
             .and_then(|v| v.hebrew.as_ref())
             .cloned()
             .unwrap_or_default();
+        let selected = self
+            .hebrew_word_idx
+            .filter(|&i| i < words.len());
+        let original_line = words
+            .iter()
+            .map(|w| w.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
 
         let word_chips: Vec<gpui::AnyElement> = words
-            .into_iter()
+            .iter()
             .enumerate()
             .map(|(i, w)| {
                 let label = w.text.clone();
-                let tip = match (&w.strongs, &w.morph) {
-                    (Some(s), Some(m)) => format!("{s} · {m}"),
-                    (Some(s), None) => s.clone(),
-                    (None, Some(m)) => m.clone(),
-                    _ => "MorphHB".to_string(),
-                };
+                let is_sel = selected == Some(i);
                 div()
                     .id(("heb-word", i))
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(palette.bg_hover))
+                    .when(is_sel, |d| {
+                        d.bg(rgb(palette.accent))
+                            .text_color(rgb(palette.bg))
+                    })
+                    .when(!is_sel, |d| {
+                        d.bg(rgb(palette.bg_hover))
+                            .text_color(rgb(palette.fg_primary))
+                            .hover(|s| s.bg(rgb(palette.border)))
+                    })
                     .text_lg()
-                    .text_color(rgb(palette.fg_primary))
-                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-                    .on_click(|_, _, _| {})
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_hebrew_word(i, cx);
+                    }))
                     .child(label)
                     .into_any_element()
             })
             .collect();
+
+        let detail_panel = selected.and_then(|i| words.get(i)).map(|w| {
+            let strongs = w
+                .strongs
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("—");
+            let morph = w
+                .morph
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("—");
+            v_flex()
+                .id("hebrew-word-detail")
+                .w_full()
+                .gap_2()
+                .px_3()
+                .py_3()
+                .rounded_md()
+                .bg(rgb(palette.bg_sidebar))
+                .border_1()
+                .border_color(rgb(palette.border))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(palette.fg_muted))
+                        .child("選中詞"),
+                )
+                .child(
+                    div()
+                        .text_xl()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(palette.fg_primary))
+                        .child(w.text.clone()),
+                )
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .flex_wrap()
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(palette.fg_muted))
+                                        .child("Strong's"),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(rgb(palette.accent))
+                                        .child(strongs.to_string()),
+                                ),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(palette.fg_muted))
+                                        .child("詞形"),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(rgb(palette.fg_primary))
+                                        .child(morph.to_string()),
+                                ),
+                        ),
+                )
+                .into_any_element()
+        });
 
         v_flex()
             .id("hebrew-view")
@@ -1280,12 +1381,32 @@ impl BibleView {
                     )
                     .child(
                         v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(palette.fg_muted))
+                                    .child("原文"),
+                            )
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .text_color(rgb(palette.fg_primary))
+                                    .child(if original_line.is_empty() {
+                                        "（無 MorphHB 資料）".to_string()
+                                    } else {
+                                        original_line
+                                    }),
+                            ),
+                    )
+                    .child(
+                        v_flex()
                             .gap_2()
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(rgb(palette.fg_muted))
-                                    .child("原文詞序（右→左）· 點詞稍後可看 Strong's / 詞形"),
+                                    .child("詞對齊（右→左）· 點詞展開 Strong's / 詞形"),
                             )
                             .child(
                                 h_flex()
@@ -1295,10 +1416,12 @@ impl BibleView {
                                     .flex_row_reverse()
                                     .justify_end()
                                     .children(word_chips),
-                            ),
+                            )
+                            .children(detail_panel),
                     ),
             )
     }
+
 
     fn render_select_bar(
 &self, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {

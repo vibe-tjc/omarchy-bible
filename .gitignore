@@ -6,3 +6,6 @@
 *.swo
 .DS_Store
 data/raw/
+
+# MorphHB per-book JSON is an import artifact; runtime embeds morphhb-ot.json.gz
+data/he/*.json

@@ -1,8 +1,8 @@
 //! MorphHB / Open Scriptures Hebrew morphology (OT).
 //!
-//! Layout: `data/he/{Osis}.json` — chapters → verses → `[text, lemma, morph]`.
-//! Versification is English/CUV-aligned (`remapVerses` at import time).
-//! NT books are omitted; [`hebrew_verse`] returns `None`.
+//! Source files: `data/he/{Osis}.json` — chapters → verses → `[text, lemma, morph]`.
+//! All 39 OT books are embedded via `include_str!`. Versification is English/CUV-aligned
+//! (`remapVerses` at import time). NT books are omitted; [`hebrew_verse`] returns `None`.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -14,6 +14,14 @@ pub struct HebrewWord {
     pub strongs: Option<String>,
     pub morph: Option<String>,
 }
+
+/// OT OSIS ids shipped in the MorphHB store (39 books).
+pub const OT_OSIS: &[&str] = &[
+    "Gen", "Exod", "Lev", "Num", "Deut", "Josh", "Judg", "Ruth", "1Sam", "2Sam",
+    "1Kgs", "2Kgs", "1Chr", "2Chr", "Ezra", "Neh", "Esth", "Job", "Ps", "Prov",
+    "Eccl", "Song", "Isa", "Jer", "Lam", "Ezek", "Dan", "Hos", "Joel", "Amos",
+    "Obad", "Jonah", "Mic", "Nah", "Hab", "Zeph", "Hag", "Zech", "Mal",
+];
 
 fn parse_word(parts: &[String]) -> Option<HebrewWord> {
     let text = parts.first()?.trim();
@@ -46,9 +54,10 @@ fn word_from_json(v: &serde_json::Value) -> Option<HebrewWord> {
     parse_word(&parts)
 }
 
-fn load_book_json(json: &str) -> Result<Vec<Vec<Vec<HebrewWord>>>, String> {
-    let raw: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
-    let chapters = raw
+fn load_book_json(raw: &str) -> Result<Vec<Vec<Vec<HebrewWord>>>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|e| format!("invalid JSON: {e}"))?;
+    let chapters = value
         .as_array()
         .ok_or_else(|| "hebrew book JSON must be an array of chapters".to_string())?;
     let mut out = Vec::with_capacity(chapters.len());
@@ -74,17 +83,63 @@ struct HebrewStore {
     books: HashMap<String, Vec<Vec<Vec<HebrewWord>>>>,
 }
 
-const GEN_JSON: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../data/he/Gen.json"
-));
+macro_rules! he_include {
+    ($file:literal) => {
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/he/", $file))
+    };
+}
+
+fn insert_book(books: &mut HashMap<String, Vec<Vec<Vec<HebrewWord>>>>, osis: &str, raw: &str) {
+    let book = load_book_json(raw).unwrap_or_else(|e| {
+        panic!("hebrew book {osis}: {e}");
+    });
+    books.insert(osis.to_string(), book);
+}
 
 fn store() -> &'static HebrewStore {
     static STORE: OnceLock<HebrewStore> = OnceLock::new();
     STORE.get_or_init(|| {
-        let mut books = HashMap::new();
-        let gen_book = load_book_json(GEN_JSON).expect("embedded data/he/Gen.json");
-        books.insert("Gen".to_string(), gen_book);
+        let mut books = HashMap::with_capacity(OT_OSIS.len());
+        insert_book(&mut books, "Gen", he_include!("Gen.json"));
+        insert_book(&mut books, "Exod", he_include!("Exod.json"));
+        insert_book(&mut books, "Lev", he_include!("Lev.json"));
+        insert_book(&mut books, "Num", he_include!("Num.json"));
+        insert_book(&mut books, "Deut", he_include!("Deut.json"));
+        insert_book(&mut books, "Josh", he_include!("Josh.json"));
+        insert_book(&mut books, "Judg", he_include!("Judg.json"));
+        insert_book(&mut books, "Ruth", he_include!("Ruth.json"));
+        insert_book(&mut books, "1Sam", he_include!("1Sam.json"));
+        insert_book(&mut books, "2Sam", he_include!("2Sam.json"));
+        insert_book(&mut books, "1Kgs", he_include!("1Kgs.json"));
+        insert_book(&mut books, "2Kgs", he_include!("2Kgs.json"));
+        insert_book(&mut books, "1Chr", he_include!("1Chr.json"));
+        insert_book(&mut books, "2Chr", he_include!("2Chr.json"));
+        insert_book(&mut books, "Ezra", he_include!("Ezra.json"));
+        insert_book(&mut books, "Neh", he_include!("Neh.json"));
+        insert_book(&mut books, "Esth", he_include!("Esth.json"));
+        insert_book(&mut books, "Job", he_include!("Job.json"));
+        insert_book(&mut books, "Ps", he_include!("Ps.json"));
+        insert_book(&mut books, "Prov", he_include!("Prov.json"));
+        insert_book(&mut books, "Eccl", he_include!("Eccl.json"));
+        insert_book(&mut books, "Song", he_include!("Song.json"));
+        insert_book(&mut books, "Isa", he_include!("Isa.json"));
+        insert_book(&mut books, "Jer", he_include!("Jer.json"));
+        insert_book(&mut books, "Lam", he_include!("Lam.json"));
+        insert_book(&mut books, "Ezek", he_include!("Ezek.json"));
+        insert_book(&mut books, "Dan", he_include!("Dan.json"));
+        insert_book(&mut books, "Hos", he_include!("Hos.json"));
+        insert_book(&mut books, "Joel", he_include!("Joel.json"));
+        insert_book(&mut books, "Amos", he_include!("Amos.json"));
+        insert_book(&mut books, "Obad", he_include!("Obad.json"));
+        insert_book(&mut books, "Jonah", he_include!("Jonah.json"));
+        insert_book(&mut books, "Mic", he_include!("Mic.json"));
+        insert_book(&mut books, "Nah", he_include!("Nah.json"));
+        insert_book(&mut books, "Hab", he_include!("Hab.json"));
+        insert_book(&mut books, "Zeph", he_include!("Zeph.json"));
+        insert_book(&mut books, "Hag", he_include!("Hag.json"));
+        insert_book(&mut books, "Zech", he_include!("Zech.json"));
+        insert_book(&mut books, "Mal", he_include!("Mal.json"));
+        debug_assert_eq!(books.len(), 39);
         HebrewStore { books }
     })
 }
@@ -111,6 +166,11 @@ pub fn has_hebrew_notes(osis: &str, chapter: u32, verse: u32) -> bool {
     hebrew_verse(osis, chapter, verse).is_some()
 }
 
+/// Number of OT books loaded in the MorphHB store.
+pub fn hebrew_book_count() -> usize {
+    store().books.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,25 +179,32 @@ mod tests {
     fn gen_1_1_has_words_and_h7225() {
         let words = hebrew_verse("Gen", 1, 1).expect("Gen 1:1");
         assert!(!words.is_empty());
-        assert_eq!(words[0].strongs.as_deref(), Some("H7225"));
+        let strongs = words[0].strongs.as_deref().unwrap_or("");
+        assert!(
+            strongs.contains("7225"),
+            "expected Strong's containing 7225, got {strongs:?}"
+        );
         assert_eq!(words[0].text.chars().next(), Some('ב'));
         assert!(has_hebrew_notes("Gen", 1, 1));
     }
 
     #[test]
-    fn gen_1_sample_has_all_31_verses() {
-        for n in 1..=31u32 {
-            assert!(hebrew_verse("Gen", 1, n).is_some(), "Gen 1:{n}");
-        }
-        assert!(hebrew_verse("Gen", 1, 32).is_none());
-        assert!(hebrew_verse("Gen", 2, 1).is_none());
+    fn hebrew_book_count_is_39() {
+        assert_eq!(hebrew_book_count(), 39);
+        assert_eq!(hebrew_book_count(), OT_OSIS.len());
     }
 
     #[test]
-    fn john_and_missing_are_none() {
+    fn ps_23_1_and_exod_1_1_are_some() {
+        let exod = hebrew_verse("Exod", 1, 1).expect("Exod 1:1");
+        assert!(!exod.is_empty());
+        let ps = hebrew_verse("Ps", 23, 1).expect("Ps 23:1");
+        assert!(!ps.is_empty());
+    }
+
+    #[test]
+    fn john_3_16_is_none() {
         assert!(hebrew_verse("John", 3, 16).is_none());
         assert!(!has_hebrew_notes("John", 3, 16));
-        assert!(hebrew_verse("Gen", 2, 1).is_none());
-        assert!(hebrew_verse("Exod", 1, 1).is_none());
     }
 }

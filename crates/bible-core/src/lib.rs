@@ -4,7 +4,7 @@ mod catalog;
 mod hebrew;
 
 pub use catalog::{BibleRef, BookMeta, CANON, Testament, lookup_canon, parse_bible_ref};
-pub use hebrew::{HebrewWord, hebrew_verse, has_hebrew_notes};
+pub use hebrew::{HebrewWord, OT_OSIS, hebrew_book_count, hebrew_verse, has_hebrew_notes};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -1262,9 +1262,13 @@ mod tests {
     #[test]
     fn chapter_verses_are_shared_arc() {
         let bible = load_bible().expect("bible");
-        // Gen 2 has no MorphHB sample, so the store Arc is reused.
-        let a = bible.load_chapter_at(0, 2).unwrap();
-        let b = bible.load_chapter_at(0, 2).unwrap();
+        // NT has no MorphHB, so the store Arc is reused without cloning verses.
+        let john_idx = CANON
+            .iter()
+            .position(|b| b.osis == "John")
+            .expect("John");
+        let a = bible.load_chapter_at(john_idx, 3).unwrap();
+        let b = bible.load_chapter_at(john_idx, 3).unwrap();
         assert!(Arc::ptr_eq(&a.verses, &b.verses));
         assert!(!a.verses.is_empty());
         let g1a = bible.load_chapter_at(0, 1).unwrap();
@@ -1272,6 +1276,11 @@ mod tests {
         assert_eq!(g1a.verses.len(), 31);
         assert!(g1a.verses[0].hebrew.is_some());
         assert_eq!(g1a.verses[0].hebrew, g1b.verses[0].hebrew);
+        // OT chapters attach hebrew (new Arc), but content stays equal across loads.
+        let g2a = bible.load_chapter_at(0, 2).unwrap();
+        let g2b = bible.load_chapter_at(0, 2).unwrap();
+        assert!(g2a.verses[0].hebrew.is_some());
+        assert_eq!(g2a.verses[0].hebrew, g2b.verses[0].hebrew);
     }
 
     #[test]

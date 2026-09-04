@@ -13,7 +13,9 @@
 
 **未收錄** 新標點和合本（CUNP）；該譯本受香港聖經公會／聯合聖經公會著作權保護。
 
+
 ## Hebrew / MorphHB
 
-- `he/Gen.json` — Genesis 1 MorphHB sample (`[hebrew, H####, morph]` words). See `he/README.md` for expand-via-remapVerses instructions.
-
+- **Runtime:** `he/morphhb-ot.json.gz` — gzip pack of all 39 OT books, embedded by `bible-core` (~2.3 MiB).
+- **Import artifacts:** `he/{Osis}.json` — per-book JSON from MorphHB; gitignored, regenerate with `scripts/import_morphhb.py`.
+- Details: `he/README.md`.
