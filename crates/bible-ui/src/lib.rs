@@ -209,7 +209,7 @@ impl BibleView {
         );
 
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜尋經文…"));
-        let jump_input = cx.new(|cx| InputState::new(window, cx).placeholder("約3:16 / Gen 1:1"));
+        let jump_input = cx.new(|cx| InputState::new(window, cx).placeholder("1:3:5 / 約3:16"));
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| {
@@ -1243,31 +1243,70 @@ impl BibleView {
             .collect::<Vec<_>>()
             .join(" ");
 
-        let word_chips: Vec<gpui::AnyElement> = words
+        let align_columns: Vec<gpui::AnyElement> = words
             .iter()
             .enumerate()
             .map(|(i, w)| {
-                let label = w.text.clone();
                 let is_sel = selected == Some(i);
+                let cells = [
+                    ("原文", w.text.clone()),
+                    ("音譯", hebrew_opt_or_dash(&w.translit)),
+                    ("直譯", hebrew_opt_or_dash(&w.gloss_literal)),
+                    ("意譯", hebrew_opt_or_dash(&w.gloss_idiomatic)),
+                ];
+                let cell_els: Vec<gpui::AnyElement> = cells
+                    .into_iter()
+                    .enumerate()
+                    .map(|(row, (_label, value))| {
+                        let is_orig = row == 0;
+                        div()
+                            .id(("heb-align-cell", i * 4 + row))
+                            .min_w(px(56.0))
+                            .px_2()
+                            .py_1()
+                            .text_center()
+                            .when(is_orig, |d| d.text_lg().font_weight(FontWeight::SEMIBOLD))
+                            .when(!is_orig, |d| d.text_xs())
+                            .text_color(rgb(if is_sel {
+                                palette.bg
+                            } else if is_orig {
+                                palette.fg_primary
+                            } else {
+                                palette.fg_muted
+                            }))
+                            .child(value)
+                            .into_any_element()
+                    })
+                    .collect();
                 div()
-                    .id(("heb-word", i))
-                    .px_2()
-                    .py_1()
+                    .id(("heb-word-col", i))
                     .rounded_md()
-                    .when(is_sel, |d| {
-                        d.bg(rgb(palette.accent))
-                            .text_color(rgb(palette.bg))
-                    })
+                    .px_1()
+                    .py_1()
+                    .when(is_sel, |d| d.bg(rgb(palette.accent)))
                     .when(!is_sel, |d| {
-                        d.bg(rgb(palette.bg_hover))
-                            .text_color(rgb(palette.fg_primary))
-                            .hover(|s| s.bg(rgb(palette.border)))
+                        d.hover(|s| s.bg(rgb(palette.bg_hover)))
                     })
-                    .text_lg()
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.select_hebrew_word(i, cx);
                     }))
+                    .child(v_flex().gap_1().items_center().children(cell_els))
+                    .into_any_element()
+            })
+            .collect();
+
+        let row_labels: Vec<gpui::AnyElement> = ["原文", "音譯", "直譯", "意譯"]
+            .into_iter()
+            .enumerate()
+            .map(|(row, label)| {
+                div()
+                    .id(("heb-align-label", row))
+                    .h(px(if row == 0 { 32.0 } else { 24.0 }))
+                    .flex()
+                    .items_center()
+                    .text_xs()
+                    .text_color(rgb(palette.fg_muted))
                     .child(label)
                     .into_any_element()
             })
@@ -1424,16 +1463,32 @@ impl BibleView {
                         div()
                             .text_xs()
                             .text_color(rgb(palette.fg_muted))
-                            .child("詞對齊（右→左）· 點詞開啟詞詳情"),
+                            .child("詞對齊（右→左）· 原文／音譯／直譯／意譯 · 點欄開啟詞詳情"),
                     )
                     .child(
                         h_flex()
                             .w_full()
-                            .flex_wrap()
+                            .items_start()
                             .gap_2()
-                            .flex_row_reverse()
-                            .justify_end()
-                            .children(word_chips),
+                            .child(
+                                v_flex()
+                                    .id("heb-align-labels")
+                                    .flex_shrink_0()
+                                    .gap_1()
+                                    .pt(px(4.0))
+                                    .children(row_labels),
+                            )
+                            .child(
+                                h_flex()
+                                    .id("heb-align-grid")
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_x_scroll()
+                                    .gap_1()
+                                    .flex_row_reverse()
+                                    .justify_end()
+                                    .children(align_columns),
+                            ),
                     ),
             );
 
@@ -2152,6 +2207,15 @@ fn morph_pos_label(morph: &str) -> Option<&'static str> {
         .and_then(pos_letter_label)
 }
 
+
+
+fn hebrew_opt_or_dash(opt: &Option<String>) -> String {
+    opt.as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "—".to_string())
+}
 
 fn default_hebrew_detail_section(word: &HebrewWord) -> Option<HebrewDetailSection> {
     let strongs_ok = word

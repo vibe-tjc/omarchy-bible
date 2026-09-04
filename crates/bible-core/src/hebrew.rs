@@ -11,11 +11,17 @@ use std::io::Read;
 use std::sync::OnceLock;
 
 /// One MorphHB word in Hebrew reading order (first = rightmost in RTL display).
+///
+/// Optional `translit` / `gloss_literal` / `gloss_idiomatic` are for the 4-row
+/// alignment shell; MorphHB pack currently leaves them `None` (UI shows 「—」).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HebrewWord {
     pub text: String,
     pub strongs: Option<String>,
     pub morph: Option<String>,
+    pub translit: Option<String>,
+    pub gloss_literal: Option<String>,
+    pub gloss_idiomatic: Option<String>,
 }
 
 /// OT OSIS ids shipped in the MorphHB store (39 books).
@@ -45,6 +51,9 @@ fn parse_word(parts: &[String]) -> Option<HebrewWord> {
         text: text.to_string(),
         strongs,
         morph,
+        translit: None,
+        gloss_literal: None,
+        gloss_idiomatic: None,
     })
 }
 
@@ -213,6 +222,10 @@ mod tests {
         );
         assert_eq!(words[0].text.chars().next(), Some('ב'));
         assert!(has_hebrew_notes("Gen", 1, 1));
+        // Gloss / translit slots exist but MorphHB pack does not fill them yet.
+        assert!(words[0].translit.is_none());
+        assert!(words[0].gloss_literal.is_none());
+        assert!(words[0].gloss_idiomatic.is_none());
     }
 
     #[test]

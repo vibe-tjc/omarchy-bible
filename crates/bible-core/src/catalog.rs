@@ -793,11 +793,18 @@ pub struct BibleRef {
     pub verse: Option<u32>,
 }
 
-/// Parse refs like `約3:16`, `創 1`, `Gen 1:1`, `1Cor13:4`.
+/// Parse refs like `約3:16`, `創 1`, `Gen 1:1`, `1Cor13:4`,
+/// or numeric `book_id:chapter[:verse]` (`1:3:5` → Gen 3:5).
 pub fn parse_bible_ref(raw: &str) -> Option<BibleRef> {
     let s = raw.trim();
     if s.is_empty() {
         return None;
+    }
+
+    // Prefer book_id:chapter[:verse] when the *whole* ref is purely numeric.
+    // Keeps OSIS-like / named forms (`Gen 1:1`, `約3:16`) on the name path.
+    if let Some(r) = parse_numeric_book_id_ref(s) {
+        return Some(r);
     }
 
     let (head, verse) = match s.rfind(':') {
@@ -838,6 +845,38 @@ pub fn parse_bible_ref(raw: &str) -> Option<BibleRef> {
         verse,
     })
 }
+
+/// Match `^\d+:\d+(:\d+)?$` as book_id (1..=66) : chapter [: verse].
+fn parse_numeric_book_id_ref(s: &str) -> Option<BibleRef> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 2 && parts.len() != 3 {
+        return None;
+    }
+    if !parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())) {
+        return None;
+    }
+    let book_id: u32 = parts[0].parse().ok()?;
+    let chapter: u32 = parts[1].parse().ok()?;
+    if book_id < 1 || book_id > 66 || chapter == 0 {
+        return None;
+    }
+    let verse = if parts.len() == 3 {
+        let v: u32 = parts[2].parse().ok()?;
+        if v == 0 {
+            return None;
+        }
+        Some(v)
+    } else {
+        None
+    };
+    let book = CANON.iter().find(|b| b.book_id == book_id)?;
+    Some(BibleRef {
+        book,
+        chapter,
+        verse,
+    })
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -884,5 +923,47 @@ mod tests {
         assert_eq!(r.chapter, 150);
         assert!(parse_bible_ref("").is_none());
         assert!(parse_bible_ref("xyz 1").is_none());
+    }
+
+    #[test]
+    fn parse_numeric_book_id_refs() {
+        let r = parse_bible_ref("1:3:5").unwrap();
+        assert_eq!(r.book.osis, "Gen");
+        assert_eq!(r.book.book_id, 1);
+        assert_eq!(r.chapter, 3);
+        assert_eq!(r.verse, Some(5));
+
+        let r = parse_bible_ref("5:6").unwrap();
+        assert_eq!(r.book.osis, "Deut");
+        assert_eq!(r.book.book_id, 5);
+        assert_eq!(r.chapter, 6);
+        assert_eq!(r.verse, None);
+
+        let r = parse_bible_ref("43:3:16").unwrap();
+        assert_eq!(r.book.osis, "John");
+        assert_eq!(r.book.book_id, 43);
+        assert_eq!(r.chapter, 3);
+        assert_eq!(r.verse, Some(16));
+
+        let r = parse_bible_ref("66:22:21").unwrap();
+        assert_eq!(r.book.osis, "Rev");
+        assert_eq!(r.chapter, 22);
+        assert_eq!(r.verse, Some(21));
+
+        // Named / OSIS forms still win when not whole-ref numeric.
+        let r = parse_bible_ref("Gen 1:1").unwrap();
+        assert_eq!(r.book.osis, "Gen");
+        assert_eq!(r.chapter, 1);
+        assert_eq!(r.verse, Some(1));
+        let r = parse_bible_ref("約3:16").unwrap();
+        assert_eq!(r.book.osis, "John");
+
+        assert!(parse_bible_ref("0:1").is_none());
+        assert!(parse_bible_ref("67:1").is_none());
+        assert!(parse_bible_ref("1:0").is_none());
+        assert!(parse_bible_ref("1:1:0").is_none());
+        assert!(parse_bible_ref("1:").is_none());
+        assert!(parse_bible_ref(":1").is_none());
+        assert!(parse_bible_ref("1:2:3:4").is_none());
     }
 }
