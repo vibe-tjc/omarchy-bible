@@ -4,8 +4,7 @@ mod settings;
 
 use bible_core::{
     Bible, BookEntry, Chapter, HebrewWord, SearchHit, Testament, TranslationId, VerseUnit,
-    ViewMode, apply_verse_tap, format_selection_summary, format_verse_copy, morph_pos_label,
-    parse_bible_ref,
+    ViewMode, apply_verse_tap, format_selection_summary, format_verse_copy, parse_bible_ref,
 };
 use gpui::{
     App, Application, Bounds, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable,
@@ -2101,6 +2100,59 @@ impl BibleView {
 
 
 
+/// Map MorphHB part-of-speech letter to a short Traditional Chinese label.
+fn pos_letter_label(pos: char) -> Option<&'static str> {
+    match pos {
+        'A' => Some("形容詞"),
+        'C' => Some("連接詞"),
+        'D' => Some("副詞"),
+        'N' => Some("名詞"),
+        'P' => Some("代名詞"),
+        'R' => Some("介詞"),
+        'S' => Some("詞綴"),
+        'T' => Some("助詞"),
+        'V' => Some("動詞"),
+        _ => None,
+    }
+}
+
+/// Derive a short 詞性 label from a MorphHB morph code.
+///
+/// Codes look like `HNcmpa`, `HVqp3ms`, or compounds `HR/Ncfsa` (lang `H`/`A`
+/// + `/`-separated segments). Takes the **last non-suffix** segment's POS
+/// letter (suffixes start with `S`) so `HNcmpa` → 名詞 and `HR/Ncfsa` → 名詞.
+/// Returns `None` when morph is empty or no known POS letter is found.
+fn morph_pos_label(morph: &str) -> Option<&'static str> {
+    let morph = morph.trim();
+    if morph.is_empty() {
+        return None;
+    }
+    // One language code prefixes the whole string (H = Hebrew, A = Aramaic).
+    let body = if morph.starts_with('H') || morph.starts_with('A') {
+        &morph[1..]
+    } else {
+        morph
+    };
+    let mut last_content: Option<char> = None;
+    let mut last_suffix: Option<char> = None;
+    for seg in body.split('/') {
+        let Some(pos) = seg.chars().next() else {
+            continue;
+        };
+        if pos == 'S' {
+            last_suffix = Some(pos);
+            continue;
+        }
+        if pos_letter_label(pos).is_some() {
+            last_content = Some(pos);
+        }
+    }
+    last_content
+        .or(last_suffix)
+        .and_then(pos_letter_label)
+}
+
+
 fn default_hebrew_detail_section(word: &HebrewWord) -> Option<HebrewDetailSection> {
     let strongs_ok = word
         .strongs
@@ -2341,6 +2393,7 @@ fn verse_block(
         })
         .child(v_flex().flex_1().min_w_0().gap_1().children(lanes_ui))
 }
+
 
 
 
