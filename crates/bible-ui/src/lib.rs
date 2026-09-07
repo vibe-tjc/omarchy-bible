@@ -1,4 +1,4 @@
-//! GPUI Kit Bible view: top-bar book picker + translation-lane chapter pane.
+//! gpui-omarchy Bible view: top-bar book picker + translation-lane chapter pane.
 
 mod settings;
 
@@ -6,22 +6,22 @@ use bible_core::{
     Bible, BookEntry, Chapter, HebrewWord, SearchHit, Testament, TranslationId, VerseUnit,
     ViewMode, apply_verse_tap, format_selection_summary, format_verse_copy, parse_bible_ref,
 };
-use gpui_kit::{
+use gpui_omarchy::gpui::base::input::{InputEvent, InputState};
+use gpui_omarchy::gpui::base::{h_flex, v_flex};
+use gpui_omarchy::gpui::{
     App, Bounds, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable, FontWeight,
     KeyBinding, MouseButton, ScrollHandle, SharedString, Subscription, TitlebarOptions, Window,
     WindowBounds, WindowOptions, div, prelude::*, px, rgb, rgba, size,
 };
-use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{Root, Theme, ThemeMode, h_flex, v_flex};
+use gpui_omarchy::{input, with_tooltip, ActiveTheme};
 use settings::{
-    AppSettings, FONT_LARGE, FONT_MEDIUM, FONT_SMALL, Palette, ResolvedTheme, ThemePreference,
-    omarchy_stamp, resolve_theme, settings_location_note_zh,
+    AppSettings, FONT_LARGE, FONT_MEDIUM, FONT_SMALL, Palette, ThemePreference,
+    apply_theme_preference, palette_from_app, settings_location_note_zh,
 };
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-gpui_kit::actions!(
+gpui_omarchy::gpui::actions!(
     omarchy_bible,
     [
         Quit,
@@ -71,69 +71,57 @@ const CJK_FONT_CANDIDATES: &[&str] = &[
 ];
 
 pub fn run_app(bible: Bible) {
-    gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
-        .run(move |cx: &mut App| {
-            gpui_kit::init(cx);
+    gpui_omarchy::application().run(move |cx: &mut App| {
+        gpui_omarchy::init(cx);
 
-            let startup = AppSettings::load();
-            let resolved = resolve_theme(startup.theme, None, Some(cx));
-            Theme::change(
-                if resolved.dark {
-                    ThemeMode::Dark
-                } else {
-                    ThemeMode::Light
-                },
-                None,
-                cx,
-            );
+        let startup = AppSettings::load();
+        apply_theme_preference(startup.theme, None, cx);
 
-            let font_family = pick_cjk_font(cx);
-            Theme::global_mut(cx).font_family = font_family.clone();
+        let font_family = pick_cjk_font(cx);
 
-            cx.on_action(|_: &Quit, cx| cx.quit());
-            cx.bind_keys([
-                KeyBinding::new("ctrl-q", Quit, None),
-                KeyBinding::new("cmd-q", Quit, None),
-                KeyBinding::new("[", PrevChapter, Some("omarchy_bible")),
-                KeyBinding::new("]", NextChapter, Some("omarchy_bible")),
-                KeyBinding::new("/", OpenSearch, Some("omarchy_bible")),
-                KeyBinding::new("escape", CloseSettings, Some("omarchy_bible")),
-                KeyBinding::new("escape", CloseSettings, Some("omarchy_bible_search")),
-            ]);
+        cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.bind_keys([
+            KeyBinding::new("ctrl-q", Quit, None),
+            KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("[", PrevChapter, Some("omarchy_bible")),
+            KeyBinding::new("]", NextChapter, Some("omarchy_bible")),
+            KeyBinding::new("/", OpenSearch, Some("omarchy_bible")),
+            KeyBinding::new("escape", CloseSettings, Some("omarchy_bible")),
+            KeyBinding::new("escape", CloseSettings, Some("omarchy_bible_search")),
+        ]);
 
-            let bounds = Bounds::centered(None, size(px(980.0), px(760.0)), cx);
-            let font_for_view = font_family;
-            let window_options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(SharedString::from("聖經")),
-                    appears_transparent: false,
-                    traffic_light_position: None,
-                }),
-                window_min_size: Some(size(px(640.0), px(480.0))),
-                app_id: Some("omarchy-bible".into()),
-                focus: true,
-                show: true,
-                ..Default::default()
-            };
+        let bounds = Bounds::centered(None, size(px(980.0), px(760.0)), cx);
+        let font_for_view = font_family;
+        let window_options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some(SharedString::from("聖經")),
+                appears_transparent: false,
+                traffic_light_position: None,
+            }),
+            window_min_size: Some(size(px(640.0), px(480.0))),
+            app_id: Some("omarchy-bible".into()),
+            focus: true,
+            show: true,
+            ..Default::default()
+        };
 
-            cx.spawn(async move |cx| {
-                cx.open_window(window_options, {
-                    move |window, cx| {
-                        let view =
-                            cx.new(|cx| BibleView::new(bible, font_for_view.clone(), window, cx));
-                        let focus = view.read(cx).focus_handle.clone();
-                        window.focus(&focus, cx);
-                        cx.new(|cx| Root::new(view, window, cx))
-                    }
-                })
-                .expect("open window");
+        cx.spawn(async move |cx| {
+            cx.open_window(window_options, {
+                move |window, cx| {
+                    let view =
+                        cx.new(|cx| BibleView::new(bible, font_for_view.clone(), window, cx));
+                    let focus = view.read(cx).focus_handle.clone();
+                    window.focus(&focus, cx);
+                    view
+                }
             })
-            .detach();
+            .expect("open window");
+        })
+        .detach();
 
-            cx.activate(true);
-        });
+        cx.activate(true);
+    });
 }
 
 fn pick_cjk_font(cx: &App) -> SharedString {
@@ -185,8 +173,6 @@ pub struct BibleView {
     hebrew_detail_section: Option<HebrewDetailSection>,
     select_mode: bool,
     selected_verses: BTreeSet<VerseUnit>,
-    resolved: ResolvedTheme,
-    omarchy_stamp: Option<u128>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -200,16 +186,7 @@ impl BibleView {
         let book_index = 0;
         let chapter = bible.load_chapter_at(book_index, 1).expect("load 創世記 1");
         let settings = AppSettings::load();
-        let resolved = resolve_theme(settings.theme, Some(window), Some(cx));
-        Theme::change(
-            if resolved.dark {
-                ThemeMode::Dark
-            } else {
-                ThemeMode::Light
-            },
-            Some(window),
-            cx,
-        );
+        apply_theme_preference(settings.theme, Some(window), cx);
 
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜尋經文…"));
         let jump_input = cx.new(|cx| InputState::new(window, cx).placeholder("1:3:5 / 約3:16"));
@@ -239,21 +216,6 @@ impl BibleView {
             },
         ));
 
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(1500))
-                    .await;
-                if this
-                    .update(cx, |this, cx| this.poll_system_theme(cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
-
         Self {
             bible,
             book_index,
@@ -281,47 +243,12 @@ impl BibleView {
             hebrew_detail_section: None,
             select_mode: false,
             selected_verses: BTreeSet::new(),
-            resolved,
-            omarchy_stamp: omarchy_stamp(),
             _subscriptions: subscriptions,
         }
     }
 
     fn recompute_theme(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
-        let resolved = resolve_theme(self.settings.theme, window.as_deref(), Some(cx));
-        self.resolved = resolved;
-        self.omarchy_stamp = omarchy_stamp();
-        Theme::change(
-            if resolved.dark {
-                ThemeMode::Dark
-            } else {
-                ThemeMode::Light
-            },
-            window,
-            cx,
-        );
-    }
-
-    fn poll_system_theme(&mut self, cx: &mut Context<Self>) {
-        if self.settings.theme != ThemePreference::System {
-            return;
-        }
-        let stamp = omarchy_stamp();
-        let resolved = resolve_theme(self.settings.theme, None, Some(cx));
-        if stamp != self.omarchy_stamp || resolved != self.resolved {
-            self.omarchy_stamp = stamp;
-            self.resolved = resolved;
-            Theme::change(
-                if resolved.dark {
-                    ThemeMode::Dark
-                } else {
-                    ThemeMode::Light
-                },
-                None,
-                cx,
-            );
-            cx.notify();
-        }
+        apply_theme_preference(self.settings.theme, window.as_deref(), cx);
     }
 
     fn persist_and_refresh(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
@@ -775,7 +702,7 @@ impl Focusable for BibleView {
 }
 
 impl Render for BibleView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let chapter = &self.chapter;
         let lanes_label = self.settings.view_mode.header_label();
         let current_chapter = chapter.chapter;
@@ -794,7 +721,7 @@ impl Render for BibleView {
             }
         }
 
-        let palette = self.resolved.palette;
+        let palette = palette_from_app(cx);
         let settings_open = self.settings_open;
         let search_open = self.search_open;
         let key_ctx = if search_open {
@@ -841,13 +768,14 @@ impl Render for BibleView {
                 chapter_count,
                 book_chip_label,
                 palette,
+                window,
                 cx,
             ))
             .when(settings_open, |d| {
                 d.child(self.render_settings_overlay(palette, cx))
             })
             .when(search_open, |d| {
-                d.child(self.render_search_overlay(palette, cx))
+                d.child(self.render_search_overlay(palette, window, cx))
             })
             .when(self.chapter_picker_open, |d| {
                 d.child(self.render_chapter_picker_overlay(
@@ -887,36 +815,41 @@ impl BibleView {
             .take(BOOK_GRID_PAGE_SIZE)
             .collect::<Vec<_>>();
 
-        let mut cells: Vec<gpui_kit::AnyElement> = page_books
+        let mut cells: Vec<gpui_omarchy::gpui::AnyElement> = page_books
             .into_iter()
             .map(|entry| {
                 let index = entry.index;
                 let is_current = index == current_index;
                 let short = entry.meta.name_zh_short;
                 let full = entry.meta.name_zh;
-                div()
-                    .id(("picker-book", index))
-                    .w(px(72.0))
-                    .h(px(44.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_md()
-                    .text_sm()
-                    .when(is_current, |d| {
-                        d.bg(rgb(palette.bg_hover)).text_color(rgb(palette.accent))
-                    })
-                    .when(!is_current, |d| {
-                        d.text_color(rgb(palette.fg_muted))
-                            .hover(|s| s.bg(rgb(palette.bg_hover)))
-                    })
-                    .tooltip(move |window, cx| Tooltip::new(full).build(window, cx))
-                    .on_click(cx.listener(move |this, event, window, cx| {
-                        this.book_picker_open = false;
-                        this.on_book_click(index, event, window, cx);
-                    }))
-                    .child(short)
-                    .into_any_element()
+                with_tooltip(
+                    div()
+                        .id(("picker-book", index))
+                        .w(px(72.0))
+                        .h(px(44.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_md()
+                        .text_sm()
+                        .when(is_current, |d| {
+                            d.bg(rgb(palette.selected_bg()))
+                                .text_color(rgb(palette.selected_fg()))
+                                .border_1()
+                                .border_color(rgb(palette.selected_border()))
+                        })
+                        .when(!is_current, |d| {
+                            d.text_color(rgb(palette.fg_muted))
+                                .hover(|s| s.bg(rgb(palette.selected_bg())))
+                        })
+                        .on_click(cx.listener(move |this, event, window, cx| {
+                            this.book_picker_open = false;
+                            this.on_book_click(index, event, window, cx);
+                        }))
+                        .child(short),
+                    full,
+                )
+                .into_any_element()
             })
             .collect();
         while cells.len() < BOOK_GRID_PAGE_SIZE {
@@ -930,7 +863,7 @@ impl BibleView {
             );
         }
 
-        let dots: Vec<gpui_kit::AnyElement> = (0..pages)
+        let dots: Vec<gpui_omarchy::gpui::AnyElement> = (0..pages)
             .map(|i| {
                 let active = i == page;
                 div()
@@ -939,9 +872,9 @@ impl BibleView {
                     .h(px(8.0))
                     .rounded_md()
                     .bg(rgb(if active {
-                        palette.accent
+                        palette.selected_fg()
                     } else {
-                        palette.border
+                        palette.selected_border()
                     }))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.book_picker_page = i;
@@ -1030,9 +963,9 @@ impl BibleView {
                     )
                     .child({
                         let mut cell_iter = cells.into_iter();
-                        let mut rows: Vec<gpui_kit::AnyElement> = Vec::new();
+                        let mut rows: Vec<gpui_omarchy::gpui::AnyElement> = Vec::new();
                         for r in 0usize..4 {
-                            let row_cells: Vec<gpui_kit::AnyElement> =
+                            let row_cells: Vec<gpui_omarchy::gpui::AnyElement> =
                                 (0..4).filter_map(|_| cell_iter.next()).collect();
                             rows.push(
                                 h_flex()
@@ -1084,6 +1017,7 @@ impl BibleView {
         chapter_count: u32,
         book_chip_label: String,
         palette: Palette,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let lanes = self.settings.view_mode.lanes();
@@ -1093,7 +1027,7 @@ impl BibleView {
         let highlight = self.highlight_verse;
         let select_mode = self.select_mode;
         let selected = self.selected_verses.clone();
-        let verses: Vec<gpui_kit::AnyElement> = self
+        let verses: Vec<gpui_omarchy::gpui::AnyElement> = self
             .chapter
             .verses
             .iter()
@@ -1188,7 +1122,7 @@ impl BibleView {
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .child(Input::new(&self.jump_input).cleanable(true).w_full()),
+                                    .child(input("jump-input", &self.jump_input, window, cx)),
                             )
                             .child(chip(
                                 "jump-go",
@@ -1250,7 +1184,7 @@ impl BibleView {
             .collect::<Vec<_>>()
             .join(" ");
 
-        let align_columns: Vec<gpui_kit::AnyElement> = words
+        let align_columns: Vec<gpui_omarchy::gpui::AnyElement> = words
             .iter()
             .enumerate()
             .map(|(i, w)| {
@@ -1261,7 +1195,7 @@ impl BibleView {
                     ("直譯", hebrew_opt_or_dash(&w.gloss_literal)),
                     ("意譯", hebrew_opt_or_dash(&w.gloss_idiomatic)),
                 ];
-                let cell_els: Vec<gpui_kit::AnyElement> = cells
+                let cell_els: Vec<gpui_omarchy::gpui::AnyElement> = cells
                     .into_iter()
                     .enumerate()
                     .map(|(row, (_label, value))| {
@@ -1275,7 +1209,7 @@ impl BibleView {
                             .when(is_orig, |d| d.text_lg().font_weight(FontWeight::SEMIBOLD))
                             .when(!is_orig, |d| d.text_xs())
                             .text_color(rgb(if is_sel {
-                                palette.bg
+                                palette.selected_fg()
                             } else if is_orig {
                                 palette.fg_primary
                             } else {
@@ -1290,9 +1224,13 @@ impl BibleView {
                     .rounded_md()
                     .px_1()
                     .py_1()
-                    .when(is_sel, |d| d.bg(rgb(palette.accent)))
+                    .when(is_sel, |d| {
+                        d.bg(rgb(palette.selected_bg()))
+                            .border_1()
+                            .border_color(rgb(palette.selected_border()))
+                    })
                     .when(!is_sel, |d| {
-                        d.hover(|s| s.bg(rgb(palette.bg_hover)))
+                        d.hover(|s| s.bg(rgb(palette.selected_bg())))
                     })
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1303,7 +1241,7 @@ impl BibleView {
             })
             .collect();
 
-        let row_labels: Vec<gpui_kit::AnyElement> = ["原文", "音譯", "直譯", "意譯"]
+        let row_labels: Vec<gpui_omarchy::gpui::AnyElement> = ["原文", "音譯", "直譯", "意譯"]
             .into_iter()
             .enumerate()
             .map(|(row, label)| {
@@ -1337,7 +1275,7 @@ impl BibleView {
                 .and_then(morph_pos_label)
                 .map(|s| s.to_string());
 
-            let mut rows: Vec<gpui_kit::AnyElement> = Vec::new();
+            let mut rows: Vec<gpui_omarchy::gpui::AnyElement> = Vec::new();
             if let Some(strongs) = strongs {
                 rows.push(hebrew_accordion_row(
                     "heb-acc-strongs",
@@ -1724,9 +1662,18 @@ impl BibleView {
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let note = self.resolved.source.note_zh(self.resolved.dark);
         let font_size = self.settings.font_size;
         let theme = self.settings.theme;
+        let note = if theme == ThemePreference::System {
+            let t = cx.omarchy();
+            let tone = match t.appearance {
+                gpui_omarchy::gpui::base::ThemeAppearance::Dark => "深色",
+                gpui_omarchy::gpui::base::ThemeAppearance::Light => "淺色",
+            };
+            format!("系統外觀：{tone}（{}）", t.name)
+        } else {
+            String::new()
+        };
 
         div()
             .id("settings-overlay")
@@ -1908,7 +1855,7 @@ impl BibleView {
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let cells: Vec<gpui_kit::AnyElement> = (1..=chapter_count)
+        let cells: Vec<gpui_omarchy::gpui::AnyElement> = (1..=chapter_count)
             .map(|n| {
                 let is_current = n == current_chapter;
                 div()
@@ -1921,11 +1868,14 @@ impl BibleView {
                     .rounded_md()
                     .text_sm()
                     .when(is_current, |d| {
-                        d.bg(rgb(palette.bg_hover)).text_color(rgb(palette.accent))
+                        d.bg(rgb(palette.selected_bg()))
+                            .text_color(rgb(palette.selected_fg()))
+                            .border_1()
+                            .border_color(rgb(palette.selected_border()))
                     })
                     .when(!is_current, |d| {
                         d.text_color(rgb(palette.fg_muted))
-                            .hover(|s| s.bg(rgb(palette.bg_hover)))
+                            .hover(|s| s.bg(rgb(palette.selected_bg())))
                     })
                     .on_click(cx.listener(move |this, event, window, cx| {
                         this.on_chapter_click(n, event, window, cx);
@@ -2002,7 +1952,12 @@ impl BibleView {
             )
     }
 
-    fn render_search_overlay(&self, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_search_overlay(
+        &self,
+        palette: Palette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let hits = self.search_hits.clone();
         let total = self.search_total;
         let shown = hits.len();
@@ -2018,7 +1973,7 @@ impl BibleView {
             format!("{total} 筆")
         };
 
-        let rows: Vec<gpui_kit::AnyElement> = hits
+        let rows: Vec<gpui_omarchy::gpui::AnyElement> = hits
             .into_iter()
             .enumerate()
             .map(|(i, hit)| {
@@ -2031,7 +1986,7 @@ impl BibleView {
                     .px_3()
                     .py_2()
                     .rounded_md()
-                    .hover(|s| s.bg(rgb(palette.bg_hover)))
+                    .hover(|s| s.bg(rgb(palette.selected_bg())))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.jump_to_search_hit(&hit, window, cx);
                     }))
@@ -2116,7 +2071,7 @@ impl BibleView {
                                 }),
                             )),
                     )
-                    .child(Input::new(&self.search_input).cleanable(true).w_full())
+                    .child(input("search-input", &self.search_input, window, cx))
                     .child(
                         h_flex()
                             .gap_1()
@@ -2249,7 +2204,7 @@ fn hebrew_accordion_row(
     accent_body: bool,
     palette: Palette,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> gpui_kit::AnyElement {
+) -> gpui_omarchy::gpui::AnyElement {
     let marker = if open { "▼" } else { "▶" };
     v_flex()
         .id(id)
@@ -2267,7 +2222,7 @@ fn hebrew_accordion_row(
                 .px_3()
                 .py_2()
                 .cursor_pointer()
-                .hover(|s| s.bg(rgb(palette.bg_hover)))
+                .hover(|s| s.bg(rgb(palette.selected_bg())))
                 .on_click(on_click)
                 .child(
                     div()
@@ -2303,7 +2258,7 @@ fn hebrew_accordion_row(
 
 
 fn chip(
-    id: impl Into<gpui_kit::ElementId>,
+    id: impl Into<gpui_omarchy::gpui::ElementId>,
     label: impl Into<SharedString>,
     active: bool,
     palette: Palette,
@@ -2316,11 +2271,14 @@ fn chip(
         .rounded_md()
         .text_sm()
         .when(active, |d| {
-            d.bg(rgb(palette.bg_hover)).text_color(rgb(palette.accent))
+            d.bg(rgb(palette.selected_bg()))
+                .text_color(rgb(palette.selected_fg()))
+                .border_1()
+                .border_color(rgb(palette.selected_border()))
         })
         .when(!active, |d| {
             d.text_color(rgb(palette.fg))
-                .hover(|s| s.bg(rgb(palette.bg_hover)))
+                .hover(|s| s.bg(rgb(palette.selected_bg())))
         })
         .on_click(on_click)
         .child(label.into())
@@ -2337,9 +2295,11 @@ fn nav_button(
         .px_3()
         .py_1()
         .rounded_md()
-        .bg(rgb(palette.bg_hover))
-        .text_color(rgb(palette.accent))
-        .hover(|s| s.bg(rgb(palette.border)))
+        .bg(rgb(palette.selected_bg()))
+        .text_color(rgb(palette.selected_fg()))
+        .border_1()
+        .border_color(rgb(palette.selected_border()))
+        .hover(|s| s.bg(rgb(palette.selected_border())))
         .on_click(on_click)
         .child(label)
 }
@@ -2353,11 +2313,11 @@ fn lane_checkbox(selected: bool, palette: Palette) -> impl IntoElement {
         .rounded_sm()
         .border_1()
         .border_color(rgb(if selected {
-            palette.accent
+            palette.selected_border()
         } else {
             palette.border
         }))
-        .when(selected, |box_| box_.bg(rgb(palette.accent)))
+        .when(selected, |box_| box_.bg(rgb(palette.selected_fg())))
 }
 
 fn verse_block(
@@ -2377,7 +2337,7 @@ fn verse_block(
     let any_selected = texts
         .iter()
         .any(|(id, _)| selected.contains(&VerseUnit::new(n, *id)));
-    let lanes_ui: Vec<gpui_kit::AnyElement> = texts
+    let lanes_ui: Vec<gpui_omarchy::gpui::AnyElement> = texts
         .into_iter()
         .enumerate()
         .map(|(lane_i, (id, text))| {
@@ -2399,7 +2359,12 @@ fn verse_block(
                 .items_start()
                 .gap_2()
                 .rounded_md()
-                .when(lane_selected, |d| d.bg(rgb(palette.bg_hover)).px_1())
+                .when(lane_selected, |d| {
+                    d.bg(rgb(palette.selected_bg()))
+                        .border_1()
+                        .border_color(rgb(palette.selected_border()))
+                        .px_1()
+                })
                 .when(select_mode, |d| {
                     d
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -2421,7 +2386,11 @@ fn verse_block(
         .gap_3()
         .rounded_md()
         .when(highlighted || any_selected, |d| {
-            d.bg(rgb(palette.bg_hover)).px_2().py_1()
+            d.bg(rgb(palette.selected_bg()))
+                .border_1()
+                .border_color(rgb(palette.selected_border()))
+                .px_2()
+                .py_1()
         })
          .child({
             let show_dagger = verse.hebrew.as_ref().is_some_and(|w| !w.is_empty());
@@ -2443,21 +2412,20 @@ fn verse_block(
                 );
             if show_dagger {
                 col = col.child(
-                    div()
-                        .id(("heb-marker", n as usize))
-                        .px_1()
-                        .rounded_sm()
-                        .text_sm()
-                        .text_color(rgb(palette.accent))
-                        .hover(|s| s.bg(rgb(palette.bg_hover)))
-                        
-                        .tooltip(|window, cx| {
-                            Tooltip::new("希伯來文形態").build(window, cx)
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.open_hebrew_view(n, cx);
-                        }))
-                        .child("†"),
+                    with_tooltip(
+                        div()
+                            .id(("heb-marker", n as usize))
+                            .px_1()
+                            .rounded_sm()
+                            .text_sm()
+                            .text_color(rgb(palette.accent))
+                            .hover(|s| s.bg(rgb(palette.selected_bg())))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open_hebrew_view(n, cx);
+                            }))
+                            .child("†"),
+                        "希伯來文形態",
+                    ),
                 );
             }
             col

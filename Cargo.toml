@@ -15,7 +15,8 @@ publish = false
 [workspace.dependencies]
 bible-core = { path = "crates/bible-core" }
 bible-ui = { path = "crates/bible-ui" }
-gpui-kit = "0.6"
+gpui-omarchy = "0.1"
+gpui = { package = "gpui-kit", version = "=0.6.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 flate2 = "1"

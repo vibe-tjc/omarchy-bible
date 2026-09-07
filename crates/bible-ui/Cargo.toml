@@ -3,11 +3,12 @@ name = "bible-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "GPUI Kit top-bar book/chapter pickers and bilingual chapter view"
+description = "Omarchy-styled GPUI book/chapter pickers and bilingual chapter view"
 publish = false
 
 [dependencies]
 bible-core.workspace = true
-gpui-kit.workspace = true
+gpui-omarchy.workspace = true
+gpui.workspace = true
 serde.workspace = true
 serde_json.workspace = true
