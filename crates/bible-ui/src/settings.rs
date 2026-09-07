@@ -1,7 +1,10 @@
 //! Persisted reader settings and theme palettes.
+#![allow(dead_code)]
 
 use bible_core::ViewMode;
-use gpui::{App, Window, WindowAppearance};
+use gpui_omarchy::gpui::base::ThemeAppearance;
+use gpui_omarchy::gpui::{App, Hsla, Window, WindowAppearance, rgb};
+use gpui_omarchy::{ActiveTheme, Theme as OmarchyTheme};
 use serde::{Deserialize, Serialize};
 #[cfg(any(test, target_os = "linux"))]
 use std::collections::HashMap;
@@ -56,7 +59,7 @@ fn default_font_size() -> u32 {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            theme: ThemePreference::Dark,
+            theme: ThemePreference::Light,
             font_size: FONT_DEFAULT,
             view_mode: ViewMode::default(),
             sidebar_abbrev: false,
@@ -161,6 +164,19 @@ pub struct Palette {
 }
 
 impl Palette {
+    pub fn from_omarchy(theme: &OmarchyTheme) -> Self {
+        Self {
+            bg: hsla_hex(theme.background),
+            bg_sidebar: hsla_hex(theme.surface),
+            bg_hover: hsla_hex(theme.hover_fill()),
+            fg: hsla_hex(theme.foreground),
+            fg_muted: hsla_hex(theme.secondary),
+            accent: hsla_hex(theme.accent),
+            fg_primary: hsla_hex(theme.bright),
+            border: hsla_hex(theme.border),
+        }
+    }
+
     /// Omarchy-like Tokyo Night (existing Phase 1 look).
     pub fn tokyo_night() -> Self {
         Self {
@@ -175,20 +191,35 @@ impl Palette {
         }
     }
 
-    /// Readable light palette (Catppuccin Latte-inspired, not an invert).
+    /// Soft pastel light palette for long-form reading.
     pub fn light() -> Self {
         Self {
-            bg: 0xeff1f5,
-            bg_sidebar: 0xe6e9ef,
-            bg_hover: 0xdce0e8,
-            fg: 0x4c4f69,
-            fg_muted: 0x8c8fa1,
-            accent: 0x1e66f5,
-            fg_primary: 0x4c4f69,
-            border: 0xccd0da,
+            bg: 0xfffbf5,
+            bg_sidebar: 0xffefe4,
+            bg_hover: 0xffdfcf,
+            fg: 0x4f3f39,
+            fg_muted: 0x9a7f74,
+            accent: 0xc46a4a,
+            fg_primary: 0x3f312d,
+            border: 0xf0cdbd,
         }
     }
+
+    /// Selected controls intentionally use a fixed warm pastel treatment so they
+    /// don't inherit Omarchy's gray/blue selected style.
+    pub fn selected_bg(self) -> u32 {
+        0xffffe1d6
+    }
+
+    pub fn selected_fg(self) -> u32 {
+        0x9f4e33
+    }
+
+    pub fn selected_border(self) -> u32 {
+        0xf4b9a4
+    }
 }
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeSource {
@@ -216,6 +247,79 @@ pub struct ResolvedTheme {
     pub dark: bool,
     pub palette: Palette,
     pub source: ThemeSource,
+}
+
+fn hsla_hex(color: Hsla) -> u32 {
+    let rgb = color.to_rgb();
+    let r = (rgb.r.clamp(0.0, 1.0) * 255.0).round() as u32;
+    let g = (rgb.g.clamp(0.0, 1.0) * 255.0).round() as u32;
+    let b = (rgb.b.clamp(0.0, 1.0) * 255.0).round() as u32;
+    (r << 16) | (g << 8) | b
+}
+
+pub fn palette_from_app(cx: &App) -> Palette {
+    Palette::from_omarchy(cx.omarchy())
+}
+
+/// Push Dark / Light / System into gpui-omarchy. System follows Omarchy files
+/// on Linux; macOS uses window appearance.
+pub fn apply_theme_preference(
+    pref: ThemePreference,
+    window: Option<&Window>,
+    cx: &mut App,
+) {
+    match pref {
+        ThemePreference::Dark => OmarchyTheme::tokyo_night().apply(cx),
+        ThemePreference::Light => pastel_light_theme().apply(cx),
+        ThemePreference::System => apply_system(window, cx),
+    }
+}
+
+fn pastel_light_theme() -> OmarchyTheme {
+    OmarchyTheme {
+        name: "Peach Milk".into(),
+        appearance: ThemeAppearance::Light,
+        background: rgb(0xfffbf5).into(),
+        surface: rgb(0xffefe4).into(),
+        inset: rgb(0xffe7da).into(),
+        foreground: rgb(0x4f3f39).into(),
+        secondary: rgb(0x9a7f74).into(),
+        bright: rgb(0x3f312d).into(),
+        accent: rgb(0xc46a4a).into(),
+        on_accent: rgb(0xfffbf5).into(),
+        selection: rgb(0xffdfcf).into(),
+        border: rgb(0xf0cdbd).into(),
+        danger: rgb(0xb95f5b).into(),
+        warning: rgb(0xb8803b).into(),
+        success: rgb(0x7f9461).into(),
+        font: ".SystemUIFont".into(),
+    }
+}
+
+fn apply_system(window: Option<&Window>, cx: &mut App) {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = window;
+        // Keep System mode light and readable for this app instead of inheriting
+        // the current Omarchy palette, which can make the UI look unchanged.
+        pastel_light_theme().apply(cx);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let dark = window
+            .map(|w| {
+                matches!(
+                    w.appearance(),
+                    WindowAppearance::Dark | WindowAppearance::VibrantDark
+                )
+            })
+            .unwrap_or(true);
+        if dark {
+            OmarchyTheme::tokyo_night().apply(cx);
+        } else {
+            pastel_light_theme().apply(cx);
+        }
+    }
 }
 
 pub fn resolve_theme(
@@ -275,7 +379,7 @@ fn resolve_system(window: Option<&Window>, cx: Option<&App>) -> ResolvedTheme {
 }
 
 /// Prefer `window.appearance()`; skip `App::window_appearance` on Linux without a
-/// window (gpui-component#104).
+/// window (gpui-kit#104).
 fn gpui_appearance(window: Option<&Window>, cx: Option<&App>) -> Option<WindowAppearance> {
     if let Some(window) = window {
         return Some(window.appearance());
@@ -288,7 +392,7 @@ fn gpui_appearance(window: Option<&Window>, cx: Option<&App>) -> Option<WindowAp
     None
 }
 
-struct OmarchyTheme {
+struct DetectedOmarchyTheme {
     dark: bool,
     palette: Option<Palette>,
 }
@@ -305,7 +409,7 @@ fn omarchy_theme_dir() -> Option<PathBuf> {
 /// Omarchy Quattro: `light.mode` marker in the current theme dir, else `colors.toml`
 /// `mode = "light"|"dark"`. Live colours from `colors.toml` when present.
 /// Linux only; macOS never inspects Omarchy paths.
-fn detect_omarchy() -> Option<OmarchyTheme> {
+fn detect_omarchy() -> Option<DetectedOmarchyTheme> {
     #[cfg(not(target_os = "linux"))]
     {
         None
@@ -329,7 +433,7 @@ fn detect_omarchy() -> Option<OmarchyTheme> {
         };
 
         let palette = colors.as_deref().and_then(palette_from_colors_toml);
-        Some(OmarchyTheme { dark, palette })
+        Some(DetectedOmarchyTheme { dark, palette })
     }
 }
 
@@ -466,7 +570,7 @@ mod tests {
     #[test]
     fn settings_defaults_and_clamp() {
         let parsed: AppSettings = serde_json::from_str("{}").unwrap();
-        assert_eq!(parsed.theme, ThemePreference::Dark);
+        assert_eq!(parsed.theme, ThemePreference::Light);
         assert_eq!(parsed.font_size, FONT_DEFAULT);
         assert!(parsed.view_mode.is_compare());
         assert_eq!(parsed.view_mode.lane_count(), 2);

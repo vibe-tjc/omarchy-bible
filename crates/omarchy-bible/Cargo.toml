@@ -3,7 +3,7 @@ name = "omarchy-bible"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Local-first bilingual Bible reader (GPUI)"
+description = "Local-first bilingual Bible reader (gpui-omarchy)"
 publish = false
 
 [[bin]]

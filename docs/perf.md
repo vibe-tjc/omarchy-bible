@@ -59,7 +59,7 @@ Current `verse_block` (reading): **3 + N lanes** = root `h_flex` + verse-number 
 | Genesis 1 | 31 | 124 | 155 |
 | Psalm 119 (longest) | 176 | 704 | 880 |
 
-gpui-component 0.5.1 **does** ship `VirtualList` / `v_virtual_list`, and gpui 0.2.2 has `uniform_list`. Neither is a clean fit here: `uniform_list` needs equal row height, and `VirtualList` requires known per-row heights. Verse height varies with wrapping and lane count. Skipping virtualization rather than a risky rewrite.
+GPUI Kit 0.6 / gpui-component **does** ship `VirtualList` / `v_virtual_list`, and GPUI has `uniform_list`. Neither is a clean fit here: `uniform_list` needs equal row height, and `VirtualList` requires known per-row heights. Verse height varies with wrapping and lane count. Skipping virtualization rather than a risky rewrite.
 
 Select mode (new) adds **one checkbox `div` per verse** while the mode is on (4 + N). Default reading node counts stay 3 + N.
 
@@ -86,7 +86,7 @@ Select mode (new) adds **one checkbox `div` per verse** while the mode is on (4 
 - Header chip **選擇** toggles select mode. Toggle off or **Esc** leaves the mode and clears the selection. `[` / `]` still change chapter (chapter nav is not stolen). Changing book/chapter clears the selection.
 - In select mode, each verse shows a checkbox; tap toggles. If exactly one verse is selected and another is tapped, the inclusive range is selected (e.g. John 3:16 then 18 → 16–18). A third tap starts a new single selection.
 - Bottom bar: `已選 N 節 · 約翰福音 3:16–18`, buttons **複製** and **取消** (取消 exits the mode).
-- Copy uses `gpui::ClipboardItem::new_string` + `cx.write_to_clipboard` (gpui 0.2.2). No `pbcopy` fallback was needed on this Mac.
+- Copy uses `ClipboardItem::new_string` + `cx.write_to_clipboard`. No `pbcopy` fallback was needed on this Mac.
 - Format (current view-mode lanes):
 
 Single:
