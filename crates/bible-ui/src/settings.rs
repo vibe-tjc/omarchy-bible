@@ -1,7 +1,7 @@
 //! Persisted reader settings and theme palettes.
 
 use bible_core::ViewMode;
-use gpui::{App, Window, WindowAppearance};
+use gpui_kit::{App, Window, WindowAppearance};
 use serde::{Deserialize, Serialize};
 #[cfg(any(test, target_os = "linux"))]
 use std::collections::HashMap;
@@ -275,7 +275,7 @@ fn resolve_system(window: Option<&Window>, cx: Option<&App>) -> ResolvedTheme {
 }
 
 /// Prefer `window.appearance()`; skip `App::window_appearance` on Linux without a
-/// window (gpui-component#104).
+/// window (gpui-kit#104).
 fn gpui_appearance(window: Option<&Window>, cx: Option<&App>) -> Option<WindowAppearance> {
     if let Some(window) = window {
         return Some(window.appearance());
