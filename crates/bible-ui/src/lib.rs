@@ -344,10 +344,12 @@ impl BibleView {
         cx: &mut Context<Self>,
     ) {
         if let Ok(loaded) = self.bible.load_chapter_at(book_index, chapter) {
+            let scroll_verse =
+                highlight.or_else(|| loaded.verses.first().map(|verse| verse.number));
             self.book_index = book_index;
             self.chapter = loaded;
             self.highlight_verse = highlight;
-            self.pending_scroll_verse = highlight;
+            self.pending_scroll_verse = scroll_verse;
             self.selected_verses.clear();
             self.chapter_picker_open = false;
             self.book_picker_open = false;
