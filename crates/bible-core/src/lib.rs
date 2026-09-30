@@ -9,7 +9,7 @@ pub use hebrew::{HebrewWord, OT_OSIS, hebrew_book_count, hebrew_verse, has_hebre
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// Embedded verse-aligned Genesis 1 (CUV 1919 神版 + KJV). Public domain.
 const GENESIS_1_JSON: &str = include_str!(concat!(
@@ -355,6 +355,8 @@ struct BookData {
     entry: BookEntry,
     /// 0-based index = chapter number - 1. Shared so `load_chapter_at` is an Arc clone.
     chapters: Vec<Arc<[Verse]>>,
+    /// Hydrate Hebrew annotations only once for each visited chapter.
+    annotated_chapters: Vec<OnceLock<Arc<[Verse]>>>,
 }
 
 /// Offline 66-book bilingual store (CUV 神版 + KJV).
@@ -421,7 +423,13 @@ impl Bible {
             return Err(LoadError::Empty);
         }
         let meta = book.entry.meta;
-        let verses = attach_hebrew(meta.osis, chapter, verses);
+        let verses = if meta.testament == Testament::Old {
+            book.annotated_chapters[chapter as usize - 1]
+                .get_or_init(|| attach_hebrew(meta.osis, chapter, verses))
+                .clone()
+        } else {
+            verses
+        };
         Ok(Chapter {
             book: meta.osis.to_string(),
             book_id: meta.book_id,
@@ -605,6 +613,7 @@ pub fn load_bible() -> Result<Bible, LoadError> {
                 },
                 chapter_count,
             },
+            annotated_chapters: (0..chapters.len()).map(|_| OnceLock::new()).collect(),
             chapters,
         });
     }
@@ -1271,16 +1280,20 @@ mod tests {
         let b = bible.load_chapter_at(john_idx, 3).unwrap();
         assert!(Arc::ptr_eq(&a.verses, &b.verses));
         assert!(!a.verses.is_empty());
+        assert!(bible.books[0].annotated_chapters[0].get().is_none());
         let g1a = bible.load_chapter_at(0, 1).unwrap();
         let g1b = bible.load_chapter_at(0, 1).unwrap();
+        assert!(bible.books[0].annotated_chapters[1].get().is_none());
         assert_eq!(g1a.verses.len(), 31);
         assert!(g1a.verses[0].hebrew.is_some());
         assert_eq!(g1a.verses[0].hebrew, g1b.verses[0].hebrew);
-        // OT chapters attach hebrew (new Arc), but content stays equal across loads.
+        assert!(Arc::ptr_eq(&g1a.verses, &g1b.verses));
+        // Each OT chapter reuses its hydrated Arc on subsequent visits.
         let g2a = bible.load_chapter_at(0, 2).unwrap();
         let g2b = bible.load_chapter_at(0, 2).unwrap();
         assert!(g2a.verses[0].hebrew.is_some());
         assert_eq!(g2a.verses[0].hebrew, g2b.verses[0].hebrew);
+        assert!(Arc::ptr_eq(&g2a.verses, &g2b.verses));
     }
 
     #[test]

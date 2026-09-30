@@ -1,5 +1,9 @@
 # omarchy-bible performance
 
+Historical measurements before Hebrew annotations. See
+[`perf-navigation.md`](perf-navigation.md) for the current navigation review and
+variable-height list implementation.
+
 Measured on this Mac, **2026-09-02 09:09 CST (UTC+8)**.
 
 ## Environment

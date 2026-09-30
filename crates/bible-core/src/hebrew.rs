@@ -5,7 +5,7 @@
 //! Embedded via `include_bytes!` + `flate2`. Versification is English/CUV-aligned
 //! (`remapVerses` at import time). NT books are omitted; [`hebrew_verse`] returns `None`.
 //!
-//! Annotation columns (音譯 / 直譯 / 意譯) are filled at load time:
+//! Annotation columns (音譯 / 直譯 / 意譯) are filled on first access per chapter:
 //! - **translit**: deterministic SBL-ish algorithm on the vocalized surface form
 //! - **gloss_literal**: English Strong's gloss from `data/he/strongs-he.json.gz`
 //! - **gloss_idiomatic**: Traditional Chinese Strong's when present, else EN gloss
@@ -188,66 +188,52 @@ fn parse_word(parts: &[String]) -> Option<HebrewWord> {
     })
 }
 
-fn word_from_json(v: &serde_json::Value) -> Option<HebrewWord> {
-    let arr = v.as_array()?;
-    let parts: Vec<String> = arr
-        .iter()
-        .filter_map(|x| x.as_str().map(|s| s.to_string()))
-        .collect();
-    parse_word(&parts)
+type RawChapter = Vec<Vec<Vec<String>>>;
+
+struct HebrewChapter {
+    raw: RawChapter,
+    words: OnceLock<Vec<Vec<HebrewWord>>>,
 }
 
-fn load_book_value(value: &serde_json::Value) -> Result<Vec<Vec<Vec<HebrewWord>>>, String> {
-    let chapters = value
-        .as_array()
-        .ok_or_else(|| "hebrew book JSON must be an array of chapters".to_string())?;
-    let mut out = Vec::with_capacity(chapters.len());
-    for ch in chapters {
-        let verses = ch
-            .as_array()
-            .ok_or_else(|| "chapter must be an array of verses".to_string())?;
-        let mut verse_list = Vec::with_capacity(verses.len());
-        for verse in verses {
-            let words_raw = verse
-                .as_array()
-                .ok_or_else(|| "verse must be an array of words".to_string())?;
-            let words: Vec<HebrewWord> = words_raw.iter().filter_map(word_from_json).collect();
-            verse_list.push(words);
-        }
-        out.push(verse_list);
+impl HebrewChapter {
+    fn words(&self) -> &[Vec<HebrewWord>] {
+        self.words.get_or_init(|| {
+            self.raw
+                .iter()
+                .map(|verse| verse.iter().filter_map(|parts| parse_word(parts)).collect())
+                .collect()
+        })
     }
-    Ok(out)
 }
 
 struct HebrewStore {
-    /// OSIS id → chapters[0]=ch1 → verses[0]=v1 → words
-    books: HashMap<String, Vec<Vec<Vec<HebrewWord>>>>,
+    /// OSIS id → chapters[0]=ch1; annotations are hydrated on first access.
+    books: HashMap<String, Vec<HebrewChapter>>,
 }
 
 fn store() -> &'static HebrewStore {
     static STORE: OnceLock<HebrewStore> = OnceLock::new();
     STORE.get_or_init(|| {
-        // Ensure Strong's map is warm before hydrating words (parse_word looks it up).
-        let _ = strongs_store();
         let mut decoder = GzDecoder::new(MORPHHB_OT_GZ);
         let mut json = String::new();
         decoder
             .read_to_string(&mut json)
             .unwrap_or_else(|e| panic!("decompress morphhb-ot.json.gz: {e}"));
-        let root: serde_json::Value = serde_json::from_str(&json)
+        let mut raw_books: HashMap<String, Vec<RawChapter>> = serde_json::from_str(&json)
             .unwrap_or_else(|e| panic!("parse morphhb-ot.json.gz: {e}"));
-        let obj = root
-            .as_object()
-            .unwrap_or_else(|| panic!("morphhb-ot.json.gz root must be an object keyed by OSIS"));
         let mut books = HashMap::with_capacity(OT_OSIS.len());
         for &osis in OT_OSIS {
-            let raw = obj
-                .get(osis)
+            let raw = raw_books
+                .remove(osis)
                 .unwrap_or_else(|| panic!("morphhb-ot.json.gz missing book {osis}"));
-            let book = load_book_value(raw).unwrap_or_else(|e| {
-                panic!("hebrew book {osis}: {e}");
-            });
-            books.insert(osis.to_string(), book);
+            let chapters = raw
+                .into_iter()
+                .map(|raw| HebrewChapter {
+                    raw,
+                    words: OnceLock::new(),
+                })
+                .collect();
+            books.insert(osis.to_string(), chapters);
         }
         debug_assert_eq!(books.len(), 39);
         HebrewStore { books }
@@ -258,22 +244,26 @@ fn store() -> &'static HebrewStore {
 ///
 /// Returns `None` for NT, missing books, out-of-range, or empty verses.
 pub fn hebrew_verse(osis: &str, chapter: u32, verse: u32) -> Option<Vec<HebrewWord>> {
-    if chapter == 0 || verse == 0 {
+    hebrew_words(osis, chapter, verse).map(<[HebrewWord]>::to_vec)
+}
+
+fn hebrew_words(osis: &str, chapter: u32, verse: u32) -> Option<&'static [HebrewWord]> {
+    if chapter == 0 || verse == 0 || !OT_OSIS.contains(&osis) {
         return None;
     }
     let book = store().books.get(osis)?;
     let ch = book.get((chapter as usize).checked_sub(1)?)?;
-    let words = ch.get((verse as usize).checked_sub(1)?)?;
+    let words = ch.words().get((verse as usize).checked_sub(1)?)?;
     if words.is_empty() {
         None
     } else {
-        Some(words.clone())
+        Some(words)
     }
 }
 
 /// UI rule: show † only when [`hebrew_verse`] would return `Some`.
 pub fn has_hebrew_notes(osis: &str, chapter: u32, verse: u32) -> bool {
-    hebrew_verse(osis, chapter, verse).is_some()
+    hebrew_words(osis, chapter, verse).is_some()
 }
 
 /// Number of OT books loaded in the MorphHB store.

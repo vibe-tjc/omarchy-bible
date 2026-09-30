@@ -8,9 +8,9 @@ use bible_core::{
 };
 use gpui::{
     App, Application, Bounds, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable,
-    FontWeight, KeyBinding, MouseButton, ScrollHandle, SharedString, Subscription, Timer,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, rgba,
-    size,
+    FontWeight, KeyBinding, ListAlignment, ListOffset, ListState, MouseButton, SharedString,
+    Subscription, Timer, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, list,
+    prelude::*, px, rgb, rgba, size,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::tooltip::Tooltip;
@@ -153,6 +153,16 @@ fn pick_cjk_font(cx: &App) -> SharedString {
     SharedString::from("sans-serif")
 }
 
+/// Inputs that can change wrapped row heights in the virtual chapter list.
+#[derive(PartialEq, Eq)]
+struct ChapterLayout {
+    font_size: u32,
+    view_mode: ViewMode,
+    select_mode: bool,
+    highlight: Option<u32>,
+    selected: BTreeSet<VerseUnit>,
+}
+
 pub struct BibleView {
     bible: Bible,
     book_index: usize,
@@ -170,7 +180,8 @@ pub struct BibleView {
     search_seq: u64,
     highlight_verse: Option<u32>,
     pending_scroll_verse: Option<u32>,
-    chapter_scroll: ScrollHandle,
+    chapter_list: ListState,
+    chapter_layout: Option<ChapterLayout>,
     chapter_picker_open: bool,
     book_picker_open: bool,
     book_picker_testament: Testament,
@@ -252,6 +263,8 @@ impl BibleView {
         Self {
             bible,
             book_index,
+            chapter_list: ListState::new(chapter.verses.len(), ListAlignment::Top, px(300.0)),
+            chapter_layout: None,
             chapter,
             font_family,
             focus_handle: cx.focus_handle(),
@@ -266,7 +279,6 @@ impl BibleView {
             search_seq: 0,
             highlight_verse: None,
             pending_scroll_verse: None,
-            chapter_scroll: ScrollHandle::new(),
             chapter_picker_open: false,
             book_picker_open: false,
             book_picker_testament: Testament::Old,
@@ -348,6 +360,8 @@ impl BibleView {
                 highlight.or_else(|| loaded.verses.first().map(|verse| verse.number));
             self.book_index = book_index;
             self.chapter = loaded;
+            self.chapter_list.reset(self.chapter.verses.len());
+            self.chapter_layout = None;
             self.highlight_verse = highlight;
             self.pending_scroll_verse = scroll_verse;
             self.selected_verses.clear();
@@ -783,9 +797,27 @@ impl Render for BibleView {
             entry.meta.testament.label_zh(),
             entry.meta.name_zh_short,
         );
+        let layout = ChapterLayout {
+            font_size: self.settings.font_size,
+            view_mode: self.settings.view_mode.clone(),
+            select_mode: self.select_mode,
+            highlight: self.highlight_verse,
+            selected: self.selected_verses.clone(),
+        };
+        if self.chapter_layout.as_ref() != Some(&layout) {
+            // Invalidate cached heights without losing the current reading position.
+            let count = self.chapter_list.item_count();
+            let position = self.chapter_list.logical_scroll_top();
+            self.chapter_list.splice(0..count, count);
+            self.chapter_list.scroll_to(position);
+            self.chapter_layout = Some(layout);
+        }
         if let Some(n) = self.pending_scroll_verse.take() {
             if let Some(idx) = self.chapter.verses.iter().position(|v| v.number == n) {
-                self.chapter_scroll.scroll_to_top_of_item(idx);
+                self.chapter_list.scroll_to(ListOffset {
+                    item_ix: idx,
+                    offset_in_item: px(0.0),
+                });
             }
         }
 
@@ -1088,27 +1120,27 @@ impl BibleView {
         let highlight = self.highlight_verse;
         let select_mode = self.select_mode;
         let selected = self.selected_verses.clone();
-        let verses: Vec<gpui::AnyElement> = self
-            .chapter
-            .verses
-            .iter()
-            .map(|verse| {
-                let n = verse.number;
-                verse_block(
-                    verse,
-                    &lanes,
-                    palette,
-                    zh,
-                    en,
-                    num,
-                    highlight == Some(n),
-                    select_mode,
-                    &selected,
-                    cx,
-                )
-                .into_any_element()
-            })
-            .collect();
+        let verses = list(
+            self.chapter_list.clone(),
+            cx.processor(move |this, ix: usize, _, cx| {
+                let verse = &this.chapter.verses[ix];
+                div()
+                    .pb_5()
+                    .child(verse_block(
+                        verse,
+                        &lanes,
+                        palette,
+                        zh,
+                        en,
+                        num,
+                        highlight == Some(verse.number),
+                        select_mode,
+                        &selected,
+                        cx,
+                    ))
+                    .into_any_element()
+            }),
+        );
 
         v_flex()
             .flex_1()
@@ -1196,18 +1228,7 @@ impl BibleView {
                             )),
                     ),
             )
-            .child(
-                v_flex()
-                    .id("chapter-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.chapter_scroll)
-                    .px_6()
-                    .py_4()
-                    .gap_5()
-                    .children(verses),
-            )
+            .child(verses.flex_1().min_h_0().w_full().px_6().py_4())
             .when(select_mode, |d| {
                 d.child(self.render_select_bar(palette, cx))
             })
