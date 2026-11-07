@@ -34,7 +34,8 @@ impl Drop for App {
 }
 
 fn start_with(name: &str, settings_json: Option<&str>) -> App {
-    let dir = std::env::temp_dir().join(format!("omarchy-bible-nsh-{name}-{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("omarchy-bible-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let settings = dir.join("settings.json");
@@ -42,7 +43,7 @@ fn start_with(name: &str, settings_json: Option<&str>) -> App {
         std::fs::write(&settings, json).unwrap();
     }
     let path = settings.to_string_lossy().into_owned();
-    let root = Root::new::<bible_nsh::App>(move || bible_nsh::AppProps {
+    let root = Root::new::<omarchy_bible::App>(move || omarchy_bible::AppProps {
         settings_path: Some(path.clone().into()).into(),
     });
     let app = Headless::start(EngineConfig {

@@ -10,3 +10,4 @@ Terminal=false
 Categories=Education;Office;Literature;
 Keywords=bible;聖經;KJV;和合本;
 StartupNotify=true
+StartupWMClass=io.github.vibe_tjc.OmarchyBible
