@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
       version: ${{ steps.meta.outputs.version }}
@@ -41,13 +41,14 @@ jobs:
         with:
           ref: ${{ steps.meta.outputs.tag }}
 
-      - name: System libraries for GPUI
+      # Native Shell's Linux backend is GTK 4 (4.14+, Ubuntu 24.04) with
+      # GStreamer; its QuickJS needs libclang for bindgen.
+      - name: System libraries for Native Shell
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev \
-            libwayland-dev libvulkan-dev libfontconfig1-dev \
-            pkg-config cmake g++
+            libgtk-4-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libgstreamer-plugins-bad1.0-dev clang libclang-dev pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
 

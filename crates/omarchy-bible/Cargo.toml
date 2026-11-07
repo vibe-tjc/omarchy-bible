@@ -3,8 +3,11 @@ name = "omarchy-bible"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Local-first bilingual Bible reader (GPUI)"
+description = "Local-first bilingual Bible reader (Native Shell)"
 publish = false
+
+[lib]
+name = "omarchy_bible"
 
 [[bin]]
 name = "omarchy-bible"
@@ -12,4 +15,19 @@ path = "src/main.rs"
 
 [dependencies]
 bible-core.workspace = true
-bible-ui.workspace = true
+nsh-core.workspace = true
+nsh-base.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+env_logger = "0.11"
+log = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nsh-platform-linux = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nsh-platform-macos = { workspace = true }
+
+[dev-dependencies]
+nsh-engine = { workspace = true }
+nsh-testing = { workspace = true }

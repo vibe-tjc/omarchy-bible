@@ -1,0 +1,9 @@
+{
+  "name": "聖經",
+  "id": "io.github.vibe_tjc.OmarchyBible",
+  "version": "0.3.0",
+  "build": 1,
+  "appearance": "system",
+  "rust": ".",
+  "root": "App"
+}

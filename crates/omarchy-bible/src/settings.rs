@@ -1,7 +1,7 @@
-//! Persisted reader settings and theme palettes.
+//! Persisted reader settings and theme palettes (no UI framework types:
+//! plain Rust, tested without an engine).
 
 use bible_core::ViewMode;
-use gpui::{App, Window, WindowAppearance};
 use serde::{Deserialize, Serialize};
 #[cfg(any(test, target_os = "linux"))]
 use std::collections::HashMap;
@@ -195,8 +195,8 @@ pub enum ThemeSource {
     BuiltinDark,
     BuiltinLight,
     Omarchy,
-    GpuiAppearance,
-    FallbackDark,
+    /// The platform's appearance (light or dark), as NSH reports it.
+    SystemAppearance,
 }
 
 impl ThemeSource {
@@ -205,8 +205,7 @@ impl ThemeSource {
         match self {
             ThemeSource::BuiltinDark | ThemeSource::BuiltinLight => String::new(),
             ThemeSource::Omarchy => format!("系統外觀：{tone}（Omarchy）"),
-            ThemeSource::GpuiAppearance => format!("系統外觀：{tone}（視窗外觀）"),
-            ThemeSource::FallbackDark => "系統外觀無法偵測，已回退為深色".to_string(),
+            ThemeSource::SystemAppearance => format!("系統外觀：{tone}（系統）"),
         }
     }
 }
@@ -218,11 +217,9 @@ pub struct ResolvedTheme {
     pub source: ThemeSource,
 }
 
-pub fn resolve_theme(
-    pref: ThemePreference,
-    window: Option<&Window>,
-    cx: Option<&App>,
-) -> ResolvedTheme {
+/// Resolves the preference. `system_dark` is the platform's appearance,
+/// used for `System` when no Omarchy theme is installed.
+pub fn resolve_theme(pref: ThemePreference, system_dark: bool) -> ResolvedTheme {
     match pref {
         ThemePreference::Dark => ResolvedTheme {
             dark: true,
@@ -234,11 +231,11 @@ pub fn resolve_theme(
             palette: Palette::light(),
             source: ThemeSource::BuiltinLight,
         },
-        ThemePreference::System => resolve_system(window, cx),
+        ThemePreference::System => resolve_system(system_dark),
     }
 }
 
-fn resolve_system(window: Option<&Window>, cx: Option<&App>) -> ResolvedTheme {
+fn resolve_system(system_dark: bool) -> ResolvedTheme {
     if let Some(omarchy) = detect_omarchy() {
         return ResolvedTheme {
             dark: omarchy.dark,
@@ -250,42 +247,15 @@ fn resolve_system(window: Option<&Window>, cx: Option<&App>) -> ResolvedTheme {
             source: ThemeSource::Omarchy,
         };
     }
-
-    if let Some(appearance) = gpui_appearance(window, cx) {
-        let dark = matches!(
-            appearance,
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        return ResolvedTheme {
-            dark,
-            palette: if dark {
-                Palette::tokyo_night()
-            } else {
-                Palette::light()
-            },
-            source: ThemeSource::GpuiAppearance,
-        };
-    }
-
     ResolvedTheme {
-        dark: true,
-        palette: Palette::tokyo_night(),
-        source: ThemeSource::FallbackDark,
+        dark: system_dark,
+        palette: if system_dark {
+            Palette::tokyo_night()
+        } else {
+            Palette::light()
+        },
+        source: ThemeSource::SystemAppearance,
     }
-}
-
-/// Prefer `window.appearance()`; skip `App::window_appearance` on Linux without a
-/// window (gpui-component#104).
-fn gpui_appearance(window: Option<&Window>, cx: Option<&App>) -> Option<WindowAppearance> {
-    if let Some(window) = window {
-        return Some(window.appearance());
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-    if let Some(cx) = cx {
-        return Some(cx.window_appearance());
-    }
-    let _ = cx;
-    None
 }
 
 struct OmarchyTheme {
