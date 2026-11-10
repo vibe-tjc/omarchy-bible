@@ -48,14 +48,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libgtk-4-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-bad1.0-dev clang libclang-dev pkg-config
+            libgstreamer-plugins-bad1.0-dev clang libclang-dev pkg-config \
+            qt6-base-dev qt6-base-dev-tools qmake6
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --release -p omarchy-bible --locked
+        run: |
+          cargo build --release -p omarchy-bible --locked
+          bash packaging/scripts/build-projector.sh release
 
       - name: Package
         run: |
@@ -122,11 +125,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install create-dmg
-        run: brew install create-dmg
+      - name: Install Qt and create-dmg
+        run: |
+          brew install qt create-dmg
+          echo "$(brew --prefix qt)/bin" >> "$GITHUB_PATH"
 
       - name: Build
-        run: cargo build --release -p omarchy-bible --locked
+        run: |
+          cargo build --release -p omarchy-bible --locked
+          bash packaging/scripts/build-projector.sh release
 
       - name: Package
         run: |

@@ -6,6 +6,7 @@
 //! - `pages`: the reader, the overlays and the Hebrew page
 
 pub mod pages;
+pub mod projection;
 pub mod settings;
 pub mod store;
 pub mod ui;
@@ -55,6 +56,22 @@ pub fn App(props: AppProps) -> impl IntoElement {
     let store = Store::new(bible(), file, dark());
     provide_context(store);
 
+    // Only explicit Start commands create a native audience surface.
+    effect(move || {
+        let projection = store.projection.get();
+        if let Err(error) = store.output.with(|o| o.send(&projection)) {
+            store.projection_status.set(error);
+        } else if cfg!(target_os = "android") && projection.active {
+            store
+                .projection_status
+                .set("已送出投影要求；裝置提示會回報外接螢幕連線狀態".into());
+        }
+    });
+    set_interval(Duration::from_millis(250), move || {
+        if let Some(status) = store.output.with(|o| o.status()) {
+            store.projection_status.set(status);
+        }
+    });
     follow_theme(store);
     shortcuts(store);
     debug_start_screen(store);

@@ -11,38 +11,40 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-
-      # Native Shell's Linux backend is GTK 4 (4.14+, Ubuntu 24.04) with
-      # GStreamer; its QuickJS needs libclang for bindgen.
-      - name: System libraries for Native Shell
+      - name: Native Shell and projector libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libgtk-4-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-bad1.0-dev clang libclang-dev pkg-config
-
+            libgstreamer-plugins-bad1.0-dev clang libclang-dev pkg-config \
+            qt6-base-dev qt6-base-dev-tools qmake6
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
-
       - name: Test
         run: cargo test --workspace --locked
-
       - name: Release build
-        run: cargo build --release -p omarchy-bible --locked
+        run: |
+          cargo build --release -p omarchy-bible --locked
+          bash packaging/scripts/build-projector.sh release
+      - name: Projection pipe and aspect-ratio tests
+        run: python3 native/projector/test_projector.py target/release/omarchy-bible-projector
 
   test-macos:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
-
+      - name: Qt projector tools
+        run: |
+          brew install qt
+          echo "$(brew --prefix qt)/bin" >> "$GITHUB_PATH"
       - name: Test
         run: cargo test --workspace --locked
-
       - name: Release build
-        run: cargo build --release -p omarchy-bible --locked
+        run: |
+          cargo build --release -p omarchy-bible --locked
+          bash packaging/scripts/build-projector.sh release
+      - name: Projection pipe and aspect-ratio tests
+        run: python3 native/projector/test_projector.py target/release/omarchy-bible-projector

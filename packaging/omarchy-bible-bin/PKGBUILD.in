@@ -9,7 +9,7 @@ arch=('x86_64')
 url='https://github.com/vibe-tjc/omarchy-bible'
 license=('Apache-2.0')
 # Native Shell renders with GTK 4 and plays media through GStreamer.
-depends=('gtk4' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-bad-libs' 'vulkan-icd-loader')
+depends=('gtk4' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-bad-libs' 'vulkan-icd-loader' 'qt6-base')
 optdepends=('noto-fonts-cjk: Traditional Chinese glyphs')
 provides=('omarchy-bible')
 conflicts=('omarchy-bible')
@@ -20,6 +20,7 @@ sha256sums=('@SHA256@')
 package() {
   cd "$srcdir"
   install -Dm755 omarchy-bible "$pkgdir/usr/bin/omarchy-bible"
+  install -Dm755 omarchy-bible-projector "$pkgdir/usr/bin/omarchy-bible-projector"
   install -Dm644 omarchy-bible.desktop "$pkgdir/usr/share/applications/omarchy-bible.desktop"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

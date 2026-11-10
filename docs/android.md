@@ -34,13 +34,15 @@ adb devices
 ## 建置、安裝
 
 ```bash
-cd crates/omarchy-bible
-nsh package --target android --abi x86_64 --abi arm64-v8a
-adb install -r '.nsh/out/聖經.apk'
-adb shell am start -n io.github.vibe_tjc.OmarchyBible/com.longbridge.nsh.AppActivity
+# 在 repository 根目錄執行；此 wrapper 才會加入原生外接顯示 host。
+bash packaging/scripts/build-android.sh --abi x86_64 --abi arm64-v8a
+adb -s 手機序號 install -r 'crates/omarchy-bible/.nsh/out/聖經.apk'
+adb -s 手機序號 shell am start -n io.github.vibe_tjc.OmarchyBible/com.longbridge.nsh.BibleActivity
 ```
 
 APK 包含 x86_64（模擬器）與 ARM64（大部分實體手機）。預設使用 debug key 簽署，適合本機測試，不能當作商店正式發佈；正式發佈需要自己的 release keystore。產物位於 `crates/omarchy-bible/.nsh/out/聖經.apk`，不應提交 `.nsh/` 或 `target/`。
+
+外接顯示投影的操作、打包限制與模擬器測試見 [projection.md](projection.md)。直接 `nsh package` 的標準 host 沒有原生投影功能。
 
 ## 手機與平板版面
 

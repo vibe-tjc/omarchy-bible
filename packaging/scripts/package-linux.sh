@@ -12,10 +12,13 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE" "$DIST"
 
 cp "$BINARY" "$STAGE/omarchy-bible"
+# Both binaries are installed together; the reader finds its sibling helper.
+cp "$(dirname "$BINARY")/omarchy-bible-projector" "$STAGE/omarchy-bible-projector"
+chmod 755 "$STAGE/omarchy-bible-projector"
 chmod 755 "$STAGE/omarchy-bible"
 cp "$ROOT/resources/omarchy-bible.desktop" "$STAGE/omarchy-bible.desktop"
 cp "$ROOT/LICENSE" "$STAGE/LICENSE"
 
 ASSET="omarchy-bible-${VERSION}-x86_64.tar.gz"
-tar -C "$STAGE" -czf "$DIST/$ASSET" omarchy-bible omarchy-bible.desktop LICENSE
+tar -C "$STAGE" -czf "$DIST/$ASSET" omarchy-bible omarchy-bible-projector omarchy-bible.desktop LICENSE
 echo "wrote $DIST/$ASSET"

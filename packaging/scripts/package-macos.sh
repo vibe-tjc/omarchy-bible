@@ -32,6 +32,8 @@ mkdir -p "$STAGE" "$DIST"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/omarchy-bible"
 chmod 755 "$APP/Contents/MacOS/omarchy-bible"
+cp "$(dirname "$BINARY")/omarchy-bible-projector" "$APP/Contents/MacOS/omarchy-bible-projector"
+chmod 755 "$APP/Contents/MacOS/omarchy-bible-projector"
 
 sed -e "s/@VERSION@/${VERSION}/g" "$MACOS_SRC/Info.plist" > "$APP/Contents/Info.plist"
 echo -n 'APPL????' > "$APP/Contents/PkgInfo"
@@ -40,20 +42,24 @@ if [[ -f "$MACOS_SRC/AppIcon.icns" ]]; then
   cp "$MACOS_SRC/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 fi
 
+# Bundle the helper’s Qt libraries, not a dependency on this build machine.
+MACDEPLOYQT="${MACDEPLOYQT:-$(command -v macdeployqt || true)}"
+[[ -n "$MACDEPLOYQT" ]] || { echo "macdeployqt required (brew install qt)" >&2; exit 1; }
+"$MACDEPLOYQT" "$APP" "-executable=$APP/Contents/MacOS/omarchy-bible-projector" -always-overwrite
+
 # Copy finished .app into dist/ for local inspection
 rm -rf "$DIST/$APP_NAME"
 cp -R "$APP" "$DIST/$APP_NAME"
 echo "wrote $DIST/$APP_NAME"
 
-# --- tar.gz (flat binary + LICENSE, same as before) ---
+# --- tar.gz (the app bundle, including the helper and Qt frameworks) ---
 TAR_STAGE="$STAGE/tar"
 mkdir -p "$TAR_STAGE"
-cp "$BINARY" "$TAR_STAGE/omarchy-bible"
-chmod 755 "$TAR_STAGE/omarchy-bible"
+cp -R "$APP" "$TAR_STAGE/$APP_NAME"
 cp "$ROOT/LICENSE" "$TAR_STAGE/LICENSE"
 
 ASSET_TGZ="omarchy-bible-${VERSION}-macos-arm64.tar.gz"
-tar -C "$TAR_STAGE" -czf "$DIST/$ASSET_TGZ" omarchy-bible LICENSE
+tar -C "$TAR_STAGE" -czf "$DIST/$ASSET_TGZ" "$APP_NAME" LICENSE
 echo "wrote $DIST/$ASSET_TGZ"
 
 # --- DMG ---

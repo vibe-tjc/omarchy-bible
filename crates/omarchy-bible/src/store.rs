@@ -41,6 +41,7 @@ pub enum Overlay {
     ChapterPicker,
     Search,
     Settings,
+    Projection,
 }
 
 /// Where the settings are read from and written to.
@@ -123,6 +124,11 @@ pub struct Store {
     pub hebrew_word: Signal<Option<usize>>,
     pub hebrew_section: Signal<Option<HebrewSection>>,
     pub copied: Signal<u64>,
+    pub projection: Signal<crate::projection::Projection>,
+    pub projection_status: Signal<String>,
+    pub focused_verse: Signal<u32>,
+    projection_chapter: Signal<bool>,
+    pub output: Stored<crate::projection::NativeOutput>,
     system_dark: Signal<bool>,
 }
 
@@ -166,6 +172,11 @@ impl Store {
             hebrew_word: signal(None),
             hebrew_section: signal(None),
             copied: signal(0),
+            projection: signal(crate::projection::Projection::default()),
+            projection_status: signal("尚未開始投影".to_owned()),
+            focused_verse: signal(1),
+            projection_chapter: signal(false),
+            output: stored(crate::projection::NativeOutput::default()),
             system_dark: signal(system_dark),
         }
     }
@@ -203,6 +214,7 @@ impl Store {
             self.book_index.set(book_index);
             self.chapter.set(Arc::new(ChapterData(loaded)));
             self.highlight.set(verse);
+            self.focused_verse.set(top.unwrap_or(1));
             self.scroll_request.update(|(n, v)| {
                 *n += 1;
                 *v = top;
@@ -400,10 +412,15 @@ impl Store {
         });
     }
 
-    /// A tap on one lane of one verse in select mode (range rules in
-    /// `bible_core::apply_verse_tap`).
+    /// Focuses and highlights a verse for single-verse projection; in select
+    /// mode also applies the range rules in `bible_core::apply_verse_tap`.
     pub fn tap_verse(&self, number: u32, translation: TranslationId) {
-        if !self.select_mode.get_untracked() || !self.lanes_untracked().contains(&translation) {
+        self.focused_verse.set(number);
+        if !self.select_mode.get_untracked() {
+            self.highlight.set(Some(number));
+            return;
+        }
+        if !self.lanes_untracked().contains(&translation) {
             return;
         }
         let numbers: Vec<u32> = self
@@ -560,6 +577,73 @@ impl Store {
             } else {
                 Some(section)
             };
+        });
+    }
+
+    /// Builds the selected verses in reading order, or the focused verse.
+    /// `whole_chapter` is explicit: starting projection never silently sends
+    /// a whole chapter to the audience.
+    pub fn prepare_projection(&self, whole_chapter: bool) {
+        self.projection_chapter.set(whole_chapter);
+        let mut numbers: Vec<u32> = self
+            .selected
+            .with_untracked(|s| s.iter().map(|u| u.number).collect());
+        numbers.sort_unstable();
+        numbers.dedup();
+        if whole_chapter {
+            numbers.clear();
+        } else if numbers.is_empty() {
+            numbers.push(self.focused_verse.get_untracked());
+        }
+        let lanes = self.lanes_untracked();
+        let multiple = self.projection.with_untracked(|p| p.multiple);
+        let slides = self
+            .chapter
+            .with_untracked(|c| crate::projection::make_slides(&c.0, &lanes, &numbers, multiple));
+        self.projection.update(|p| {
+            p.slides = slides;
+            p.index = 0;
+            p.revision += 1;
+        });
+    }
+
+    pub fn start_projection(&self) {
+        if self.projection.with_untracked(|p| p.slides.is_empty()) {
+            self.prepare_projection(false);
+        }
+        self.projection.update(|p| {
+            p.active = true;
+            p.blank = false;
+            p.revision += 1;
+        });
+    }
+    pub fn stop_projection(&self) {
+        self.projection.update(|p| {
+            p.active = false;
+            p.revision += 1;
+        });
+        self.projection_status.set("已停止投影".into());
+    }
+    pub fn projection_step(&self, delta: i32) {
+        self.projection.update(|p| p.step(delta));
+    }
+    pub fn projection_blank(&self) {
+        self.projection.update(|p| {
+            p.blank = !p.blank;
+            p.revision += 1;
+        });
+    }
+    pub fn projection_multiple(&self) {
+        self.projection.update(|p| {
+            p.multiple = !p.multiple;
+            p.revision += 1;
+        });
+        self.prepare_projection(self.projection_chapter.get_untracked());
+    }
+    pub fn projection_screen(&self, delta: i32) {
+        self.projection.update(|p| {
+            p.screen = (p.screen + delta).max(-1);
+            p.revision += 1;
         });
     }
 

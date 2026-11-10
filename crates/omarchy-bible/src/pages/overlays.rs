@@ -34,6 +34,15 @@ pub fn overlays() -> impl IntoElement {
         .child(when(open(Overlay::Search), move || {
             sheet_or_panel(store, 56.0, 560.0, Some(560.0), search_panel(store))
         }))
+        .child(when(open(Overlay::Projection), move || {
+            sheet_or_panel(
+                store,
+                32.0,
+                640.0,
+                Some(720.0),
+                crate::pages::projection::projection_panel(),
+            )
+        }))
         .child(when(open(Overlay::Settings), move || {
             settings_drawer(store)
         }))

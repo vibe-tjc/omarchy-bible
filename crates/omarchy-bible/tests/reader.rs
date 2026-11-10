@@ -544,3 +544,52 @@ fn rotating_reflows_between_layouts() -> Result<(), String> {
     assert_eq!(position(&app), "1/50");
     Ok(())
 }
+
+#[test]
+fn projection_defaults_to_single_and_paginates_selection() -> Result<(), String> {
+    let mut app = start("projection-selection");
+    app.press("id:toggle-select")?;
+    app.press("起初，神創造天地。")?;
+    app.press("text:/^地是空虛混沌/")?;
+    app.press("id:select-project")?;
+    app.wait_for("多節：關閉（單節）")?;
+    app.wait_for("創世記 1:1")?;
+    app.press("id:projection-next")?;
+    app.wait_for("創世記 1:2")?;
+    app.press("id:projection-prev")?;
+    app.wait_for("創世記 1:1")?;
+    app.press("id:projection-multiple")?;
+    app.wait_for("多節：開啟")?;
+    // No output starts simply by opening the panel or changing the option.
+    app.wait_for("尚未開始投影")?;
+    app.press("id:projection-chapter")?;
+    app.press("id:projection-multiple")?;
+    app.wait_for("1 / 31")?;
+    app.press("id:projection-close")?;
+    app.wait_for("id:verses")?;
+    Ok(())
+}
+
+#[test]
+fn a_verse_tap_targets_single_verse_projection() -> Result<(), String> {
+    let mut app = start("projection-focused");
+    app.press("text:/^地是空虛混沌/")?;
+    app.press("id:open-projection")?;
+    app.wait_for("多節：關閉（單節）")?;
+    app.wait_for("創世記 1:2")?;
+    app.wait_for("1 / 1")?;
+    app.wait_for("尚未開始投影")?;
+    Ok(())
+}
+
+#[test]
+fn phone_can_reach_projection_from_the_tools_menu() -> Result<(), String> {
+    let mut app = start_on("projection-phone", PHONE);
+    app.press("id:tools-menu")?;
+    app.press("id:menu-projection")?;
+    app.wait_for("多節：關閉（單節）")?;
+    app.wait_for("id:projection-start")?;
+    app.back()?;
+    app.wait_for("id:tools-menu")?;
+    Ok(())
+}

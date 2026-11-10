@@ -170,6 +170,12 @@ fn tools_menu(store: Store) -> impl IntoElement {
             move || store.toggle_select_mode(),
         ))
         .child(menu_row(
+            "menu-projection",
+            "投影",
+            || false,
+            move || crate::pages::projection::open(store),
+        ))
+        .child(menu_row(
             "menu-search",
             "搜尋",
             || false,
@@ -296,6 +302,12 @@ fn header_controls(store: Store) -> impl IntoElement {
             "搜尋",
             move || store.overlay.get() == Overlay::Search,
             move || store.open_overlay(Overlay::Search),
+        ))
+        .child(chip(
+            "open-projection",
+            "投影",
+            || false,
+            move || crate::pages::projection::open(store),
         ))
         .child(chip(
             "open-settings",
@@ -559,6 +571,12 @@ fn select_bar(store: Store) -> impl IntoElement {
                     },
                     || false,
                     move || store.copy_selection(),
+                ))
+                .child(chip(
+                    "select-project",
+                    "投影",
+                    || false,
+                    move || crate::pages::projection::open(store),
                 ))
                 .child(chip(
                     "select-cancel",
