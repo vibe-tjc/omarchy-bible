@@ -49,7 +49,7 @@ pub struct AppProps {
 #[component]
 pub fn App(props: AppProps) -> impl IntoElement {
     let file = match props.settings_path.get_untracked() {
-        Some(path) => SettingsFile(Some(std::path::PathBuf::from(path.as_ref()))),
+        Some(path) => SettingsFile::File(std::path::PathBuf::from(path.as_ref())),
         None => SettingsFile::user(),
     };
     let store = Store::new(bible(), file, dark());
@@ -124,6 +124,17 @@ fn shortcuts(store: Store) {
     on_key("/", move |_| {
         if store.hebrew_verse.get_untracked().is_none() {
             store.open_overlay(Overlay::Search);
+        }
+    });
+    // Android's back button steps out the same way, and leaves the app
+    // only when there is nothing left to close. (An open dialog takes Back
+    // itself and reports it through its `on_cancel`.)
+    on_back_press(move || {
+        if store.can_escape() {
+            store.escape();
+            true
+        } else {
+            false
         }
     });
     on_key_with(

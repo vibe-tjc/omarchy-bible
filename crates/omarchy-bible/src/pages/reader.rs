@@ -13,6 +13,7 @@ use nsh_core::prelude::*;
 
 use crate::store::{Overlay, Store, store};
 use crate::ui::controls::{chip, field, label, nav_button};
+use crate::ui::layout::compact;
 use crate::ui::theme::{reader, theme};
 
 pub fn reader_screen() -> impl IntoElement {
@@ -26,9 +27,17 @@ pub fn reader_screen() -> impl IntoElement {
 }
 
 fn header(store: Store) -> impl IntoElement {
+    // One header for every width. On a phone (compact) it is two rows: the
+    // book chip with the chapter navigation, then the jump field with a
+    // menu of the tools that do not fit; wider windows keep one row of tools
+    // with the jump field under it. Every part is bound to `compact()`, so
+    // rotating or resizing reflows it without rebuilding the reader.
     view()
-        .px_6()
-        .py_3()
+        .px(move || px(if compact() { 12.0 } else { 24.0 }))
+        .pb(move || px(if compact() { 8.0 } else { 12.0 }))
+        // Below the status bar: Android's edge-to-edge window draws under
+        // it, so the inset comes first (0 on the desktop).
+        .pt_safe_area_plus(px(10.0))
         .gap_2()
         .border_b_1()
         .border_color(move || theme().border)
@@ -57,12 +66,14 @@ fn header(store: Store) -> impl IntoElement {
                         .min_w(px(0.0))
                         .flex_row()
                         .justify_end()
+                        .style_with(move |s| if compact() { s.hidden() } else { s })
                         .child(header_controls(store)),
                 ),
         )
-        .child(label(move || {
-            SharedString::from(store.settings.with(|s| s.view_mode.header_label()))
-        }))
+        .child(
+            label(move || SharedString::from(store.settings.with(|s| s.view_mode.header_label())))
+                .style_with(move |s| if compact() { s.hidden() } else { s }),
+        )
         .child(
             view()
                 .flex_row()
@@ -87,13 +98,120 @@ fn header(store: Store) -> impl IntoElement {
                     "跳轉",
                     || false,
                     move || store.submit_jump(),
-                )),
+                ))
+                .child(
+                    view()
+                        .style_with(move |s| if compact() { s } else { s.hidden() })
+                        .child(tools_menu(store)),
+                ),
         )
         .child(when(store.jump_error, || {
             text("找不到這段經文，試試「約3:16」或「1:3:5」")
                 .text_xs()
                 .text_color(move || theme().destructive)
         }))
+}
+
+/// The phone's tools: view mode, translation, select, search and settings
+/// behind one "⋯" button, as a native menu.
+fn tools_menu(store: Store) -> impl IntoElement {
+    let mode_is = move |mode: ViewMode| move || store.settings.with(|s| s.view_mode == mode);
+    let set_mode = move |mode: ViewMode| move || store.set_view_mode(mode.clone());
+    nsh_base::menu()
+        .offset(px(4.0))
+        .popup_style(|s| {
+            s.p_1()
+                .min_w(px(220.0))
+                .rounded(move || theme().radius)
+                .border_1()
+                .border_color(move || theme().border)
+                .bg(move || theme().popover)
+                .shadow_md()
+        })
+        .trigger(
+            view()
+                .min_w(px(44.0))
+                .min_h(px(44.0))
+                .items_center()
+                .justify_center()
+                .rounded(move || theme().radius)
+                .label("更多")
+                .test_id("tools-menu")
+                .child(text("⋯").text_lg().text_color(move || theme().foreground)),
+        )
+        .child(menu_row(
+            "menu-compare",
+            "對照",
+            mode_is(ViewMode::default()),
+            set_mode(ViewMode::default()),
+        ))
+        .child(menu_row(
+            "menu-cuv",
+            "和合本",
+            mode_is(ViewMode::single(TranslationId::Cuv1919)),
+            set_mode(ViewMode::single(TranslationId::Cuv1919)),
+        ))
+        .child(menu_row(
+            "menu-kjv",
+            "KJV",
+            mode_is(ViewMode::single(TranslationId::Kjv)),
+            set_mode(ViewMode::single(TranslationId::Kjv)),
+        ))
+        .child(
+            nsh_base::menu_separator()
+                .h(px(1.0))
+                .my_1()
+                .bg(move || theme().border),
+        )
+        .child(menu_row(
+            "menu-select",
+            "選擇經文",
+            || false,
+            move || store.toggle_select_mode(),
+        ))
+        .child(menu_row(
+            "menu-search",
+            "搜尋",
+            || false,
+            move || store.open_overlay(Overlay::Search),
+        ))
+        .child(menu_row(
+            "menu-settings",
+            "設定",
+            || false,
+            move || store.open_overlay(Overlay::Settings),
+        ))
+}
+
+/// One row of the tools menu: a check mark when `checked`, then the title.
+fn menu_row(
+    id: &'static str,
+    title: &'static str,
+    checked: impl Fn() -> bool + 'static,
+    on_select: impl Fn() + 'static,
+) -> impl IntoElement {
+    nsh_base::menu_item()
+        .on_select(on_select)
+        .min_h(px(44.0))
+        .px_3()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .rounded(move || theme().radius)
+        .hover(|s| s.bg(move || theme().accent))
+        .focus(|s| s.bg(move || theme().accent))
+        .child(
+            text(move || SharedString::from(if checked() { "✓" } else { "" }))
+                .w(px(16.0))
+                .text_sm()
+                .text_color(move || theme().primary),
+        )
+        .child(
+            text(title)
+                .test_id(id)
+                .text_base()
+                .text_color(move || theme().popover_foreground),
+        )
 }
 
 fn chapter_nav(store: Store) -> impl IntoElement {
@@ -220,9 +338,19 @@ fn verse_list(store: Store) -> impl IntoElement {
         })
     })
     .estimated_item_size(px(96.0))
-    .content_padding_x(px(24.0))
-    .content_padding_y(px(16.0))
-    .row_gap(px(20.0))
+    .content_padding_x(move || px(if compact() { 12.0 } else { 24.0 }))
+    .content_padding_top(px(16.0))
+    // Clear of Android's navigation bar (the safe area) when the selection
+    // bar is not there to take it.
+    .content_padding_bottom(move || {
+        px(16.0
+            + if store.select_mode.get() {
+                0.0
+            } else {
+                safe_area().bottom.0
+            })
+    })
+    .row_gap(move || px(if compact() { 16.0 } else { 20.0 }))
     .test_id("verses")
     .flex_1()
     .element_ref(&list)
@@ -400,8 +528,10 @@ fn select_bar(store: Store) -> impl IntoElement {
         .items_center()
         .justify_between()
         .gap_3()
-        .px_6()
-        .py_3()
+        .px(move || px(if compact() { 12.0 } else { 24.0 }))
+        .pt_3()
+        // Above Android's navigation bar.
+        .pb_safe_area_plus(px(12.0))
         .border_t_1()
         .border_color(move || theme().border)
         .bg(move || theme().card)

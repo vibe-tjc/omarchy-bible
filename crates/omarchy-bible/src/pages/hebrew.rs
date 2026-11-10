@@ -11,6 +11,7 @@ use nsh_core::prelude::*;
 
 use crate::store::{HebrewSection, Store, store};
 use crate::ui::controls::{chip, label};
+use crate::ui::layout::compact;
 use crate::ui::theme::{reader, theme};
 
 const ROWS: [&str; 4] = ["原文", "音譯", "直譯", "意譯"];
@@ -48,8 +49,9 @@ pub fn hebrew_screen() -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .justify_between()
-                .px_6()
-                .py_3()
+                .px(move || px(if compact() { 12.0 } else { 24.0 }))
+                .pt_safe_area_plus(px(12.0))
+                .pb_3()
                 .border_b_1()
                 .border_color(move || theme().border)
                 .child(chip(
@@ -60,6 +62,10 @@ pub fn hebrew_screen() -> impl IntoElement {
                 ))
                 .child(
                     text(title)
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .text_center()
+                        .number_of_lines(1)
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(reader),
@@ -67,10 +73,18 @@ pub fn hebrew_screen() -> impl IntoElement {
                 .child(view().w(px(64.0))),
         )
         .child(
+            // The word detail is a column beside the words when there is
+            // room for both, and under them on a phone.
             view()
                 .flex_1()
                 .min_h(px(0.0))
-                .flex_row()
+                .style_with(move |s| {
+                    if compact() {
+                        s.flex_col()
+                    } else {
+                        s.flex_row()
+                    }
+                })
                 .child(body(store))
                 .child(when(
                     move || store.hebrew_word.get().is_some(),
@@ -98,9 +112,9 @@ fn verse_text(store: Store, id: TranslationId) -> impl Fn() -> SharedString {
 
 fn body(store: Store) -> impl IntoElement {
     let words = computed(move || store.hebrew_words());
-    scroll().flex_1().min_w(px(0.0)).child(
+    scroll().flex_1().min_w(px(0.0)).min_h(px(0.0)).child(
         view()
-            .px_6()
+            .px(move || px(if compact() { 12.0 } else { 24.0 }))
             .py_4()
             .gap_4()
             .child(
@@ -250,12 +264,20 @@ fn detail(store: Store) -> impl IntoElement {
     let pos = move || morph().and_then(|m| morph_pos_label(&m).map(str::to_owned));
     view()
         .test_id("hebrew-word-detail")
-        .w(px(280.0))
-        .h_full()
+        .style_with(move |s| {
+            if compact() {
+                // Under the words, full width, clear of the navigation bar.
+                s.w_full()
+                    .max_h(percentage(0.45))
+                    .border_t_1()
+                    .pb_safe_area_plus(px(12.0))
+            } else {
+                s.w(px(280.0)).h_full().border_l_1()
+            }
+        })
         .px_4()
         .py_3()
         .gap_2()
-        .border_l_1()
         .border_color(move || theme().border)
         .bg(move || theme().card)
         .child(

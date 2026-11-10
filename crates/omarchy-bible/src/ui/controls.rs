@@ -7,6 +7,7 @@
 use nsh_base::{button, input};
 use nsh_core::prelude::*;
 
+use super::layout::{target, touch};
 use super::theme::{reader, scrim, theme};
 
 /// A chip: a quiet text button that shows `active` in the accent.
@@ -26,6 +27,9 @@ pub fn chip(
         .on_press(move |_: &()| on_press())
         .px_2()
         .py_1()
+        // 44 pt on touch screens; the desktop keeps its dense chips.
+        .min_h(px(target()))
+        .justify_center()
         .rounded(move || theme().radius)
         .cursor_pointer()
         .hover(|s| s.bg(move || theme().accent))
@@ -59,6 +63,10 @@ pub fn nav_button(
         .on_press(move |_: &()| on_press())
         .px_3()
         .py_1()
+        .min_w(px(target()))
+        .min_h(px(target()))
+        .items_center()
+        .justify_center()
         .rounded(move || theme().radius)
         .bg(move || theme().accent)
         .cursor_pointer()
@@ -68,7 +76,8 @@ pub fn nav_button(
         .child(
             text(glyph)
                 .test_id(id)
-                .tooltip(tip(label))
+                // Hints need a pointer: none on touch screens.
+                .when(!touch(), |t| t.tooltip(tip(label)))
                 .text_sm()
                 .text_color(move || theme().primary),
         )
@@ -108,7 +117,7 @@ pub fn field(
         .placeholder_color(|| color(theme().muted_foreground))
         .caret_color(|| color(theme().primary))
         .test_id(id)
-        .h(px(32.0))
+        .h(px(target().max(32.0)))
         .px_3()
         .text_sm()
         .text_color(move || theme().foreground)

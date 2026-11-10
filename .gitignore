@@ -1,4 +1,7 @@
+# Cargo and NSH generate build trees at the workspace and app levels.
 /target
+**/target/
+**/.nsh/
 **/*.rs.bk
 .idea/
 .vscode/

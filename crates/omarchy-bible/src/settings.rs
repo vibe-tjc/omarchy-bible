@@ -141,7 +141,11 @@ pub fn settings_location_note_zh() -> &'static str {
     {
         "設定儲存於 ~/Library/Application Support/omarchy-bible/settings.json"
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "android")]
+    {
+        "設定儲存在這個 app 的資料裡"
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "android")))]
     {
         "設定儲存於 ~/.config/omarchy-bible/settings.json"
     }

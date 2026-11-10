@@ -18,6 +18,7 @@ use crate::settings::{
 };
 use crate::store::{BOOK_GRID_PAGE_SIZE, Overlay, Store, store};
 use crate::ui::controls::{backdrop, chip, field, label, nav_button, panel, panel_header, tip};
+use crate::ui::layout::{compact, touch};
 use crate::ui::theme::{reader, theme};
 
 pub fn overlays() -> impl IntoElement {
@@ -25,38 +26,75 @@ pub fn overlays() -> impl IntoElement {
     let open = move |o: Overlay| move || store.overlay.get() == o;
     view()
         .child(when(open(Overlay::BookPicker), move || {
-            centered(store, 96.0, book_picker(store).w(px(360.0)))
+            sheet_or_panel(store, 96.0, 360.0, None, book_picker(store))
         }))
         .child(when(open(Overlay::ChapterPicker), move || {
-            centered(
-                store,
-                120.0,
-                chapter_picker(store).w(px(420.0)).max_h(px(480.0)),
-            )
+            sheet_or_panel(store, 120.0, 420.0, Some(480.0), chapter_picker(store))
         }))
         .child(when(open(Overlay::Search), move || {
-            centered(
-                store,
-                56.0,
-                search_panel(store).w(px(560.0)).max_h(px(560.0)),
-            )
+            sheet_or_panel(store, 56.0, 560.0, Some(560.0), search_panel(store))
         }))
         .child(when(open(Overlay::Settings), move || {
             settings_drawer(store)
         }))
 }
 
-/// A dialog with a backdrop and `content` centered `top` points below the
-/// top of the window.
-fn centered(store: Store, top: f32, content: View) -> impl IntoElement {
+/// An overlay's dialog. In a wide window `content` is a panel `width`
+/// points wide (at most `max_height` tall), floating `top` points below
+/// the top over a dimmed backdrop. In a compact (phone) window it is a
+/// full-screen sheet instead, padded clear of the status and navigation
+/// bars: a 360 pt panel would leave a few points of margin there, and the
+/// backdrop would be too small to aim at.
+fn sheet_or_panel(
+    store: Store,
+    top: f32,
+    width: f32,
+    max_height: Option<f32>,
+    content: View,
+) -> impl IntoElement {
     dialog()
-        .animation(ModalAnimation::Fade)
+        .animation(move || {
+            if compact() {
+                ModalAnimation::Slide
+            } else {
+                ModalAnimation::Fade
+            }
+        })
         .on_cancel(move || store.close_overlay())
         .flex_1()
         .items_center()
-        .pt(px(top))
+        .pt(move || px(if compact() { 0.0 } else { top }))
         .child(backdrop(move || store.close_overlay()))
-        .child(content.max_w(percentage(0.92)))
+        .child(
+            content
+                .w(move || {
+                    if compact() {
+                        relative(1.0).into()
+                    } else {
+                        Length::from(px(width))
+                    }
+                })
+                .style_with(move |s| {
+                    if compact() {
+                        // Full screen: the sheet is the page, square and
+                        // clear of the bars.
+                        s.flex_1()
+                            .rounded(px(0.0))
+                            .border(px(0.0))
+                            .pt_safe_area_plus(px(12.0))
+                            .pb_safe_area_plus(px(12.0))
+                    } else {
+                        // A floating panel sized by its content. (No
+                        // `flex_1` here: its zero basis would collapse the
+                        // panel to its padding.)
+                        let s = s.max_w(percentage(0.92));
+                        match max_height {
+                            Some(h) => s.max_h(px(h)),
+                            None => s,
+                        }
+                    }
+                }),
+        )
 }
 
 // ── Book picker ──────────────────────────────────────────────────────
@@ -154,8 +192,12 @@ fn book_cell(store: Store, slot: usize) -> impl IntoElement {
                 store.goto(b.index, 1, None);
             }
         })
-        .w(px(72.0))
-        .h(px(44.0))
+        // Four to a row, sharing the width: 72 pt in the 360 pt panel, a
+        // quarter of a phone's full-width sheet.
+        .flex_1()
+        .basis(px(0.0))
+        .min_h(px(44.0))
+        .h(move || px(if touch() { 56.0 } else { 44.0 }))
         .items_center()
         .justify_center()
         .rounded(move || theme().radius)
@@ -172,10 +214,14 @@ fn book_cell(store: Store, slot: usize) -> impl IntoElement {
         .focus(|s| s.outline(px(2.0)).outline_color(move || theme().ring))
         .child(
             text(move || SharedString::from(name()))
-                .tooltip(tip(move || {
-                    book.get()
-                        .map_or(SharedString::default(), |b| b.meta.name_zh.into())
-                }))
+                // The full name is a hint with a pointer; on a touch screen
+                // it is shown under the abbreviation instead.
+                .when(!touch(), |t| {
+                    t.tooltip(tip(move || {
+                        book.get()
+                            .map_or(SharedString::default(), |b| b.meta.name_zh.into())
+                    }))
+                })
                 .text_sm()
                 .text_color(move || {
                     if current() {
@@ -185,6 +231,12 @@ fn book_cell(store: Store, slot: usize) -> impl IntoElement {
                     }
                 }),
         )
+        .child(when(touch, move || {
+            text(move || SharedString::from(book.get().map_or("", |b| b.meta.name_zh)))
+                .text_xs()
+                .number_of_lines(1)
+                .text_color(move || theme().muted_foreground)
+        }))
 }
 
 // ── Chapter picker ───────────────────────────────────────────────────
@@ -213,8 +265,8 @@ fn chapter_picker(store: Store) -> View {
                                 nsh_base::button()
                                     .accessibility_label(format!("第 {n} 章"))
                                     .on_press(move |_: &()| store.goto_chapter(n))
-                                    .w(px(40.0))
-                                    .h(px(36.0))
+                                    .w(px(if touch() { 52.0 } else { 40.0 }))
+                                    .h(px(if touch() { 48.0 } else { 36.0 }))
                                     .items_center()
                                     .justify_center()
                                     .rounded(move || theme().radius)
@@ -380,13 +432,21 @@ fn settings_drawer(store: Store) -> impl IntoElement {
         .child(
             view()
                 .test_id("settings-panel")
-                .w(px(340.0))
+                // A drawer on the right; the whole screen on a phone.
+                .w(move || {
+                    if compact() {
+                        relative(1.0).into()
+                    } else {
+                        Length::from(px(340.0))
+                    }
+                })
                 .h_full()
                 .bg(move || theme().card)
                 .border_l_1()
                 .border_color(move || theme().border)
                 .px_5()
-                .py_4()
+                .pt_safe_area_plus(px(16.0))
+                .pb_safe_area_plus(px(16.0))
                 .gap_4()
                 .child(panel_header("設定", "settings-close", move || {
                     store.close_overlay()

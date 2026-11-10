@@ -43,27 +43,54 @@ pub enum Overlay {
     Settings,
 }
 
-/// Where the settings are read from and written to. Tests point it at a
-/// temporary file so they never touch the user's settings.
+/// Where the settings are read from and written to.
+///
+/// The desktop keeps `settings.json` in the config directory, as before, so
+/// existing settings carry over. Android has no home directory: there the
+/// app keeps them in NSH's app storage, which the platform holds in the
+/// app's private data. Tests point at a temporary file.
 #[derive(Clone)]
-pub struct SettingsFile(pub Option<std::path::PathBuf>);
+pub enum SettingsFile {
+    File(std::path::PathBuf),
+    AppStorage,
+}
+
+/// The app-storage key holding the settings JSON.
+const SETTINGS_KEY: &str = "settings";
 
 impl SettingsFile {
+    /// The user's settings on this platform.
     pub fn user() -> Self {
-        Self(Some(AppSettings::config_path()))
+        if cfg!(target_os = "android") {
+            Self::AppStorage
+        } else {
+            Self::File(AppSettings::config_path())
+        }
     }
 
+    /// Reads them; defaults when there are none or they do not parse.
+    /// Call where components run (app storage is the engine's).
     pub fn load(&self) -> AppSettings {
-        match &self.0 {
-            Some(path) => AppSettings::load_from(path),
-            None => AppSettings::default(),
+        match self {
+            Self::File(path) => AppSettings::load_from(path),
+            Self::AppStorage => nsh_core::storage::Storage::get_item(SETTINGS_KEY)
+                .and_then(|json| serde_json::from_str::<AppSettings>(&json).ok())
+                .unwrap_or_default()
+                .clamp(),
         }
     }
 
     pub fn save(&self, settings: &AppSettings) {
-        if let Some(path) = &self.0
-            && let Err(err) = settings.save_to(path)
-        {
+        let result = match self {
+            Self::File(path) => settings.save_to(path).map_err(|e| e.to_string()),
+            Self::AppStorage => serde_json::to_string(settings)
+                .map_err(|e| e.to_string())
+                .and_then(|json| {
+                    nsh_core::storage::Storage::set_item(SETTINGS_KEY, json)
+                        .map_err(|_| "app storage is full".to_owned())
+                }),
+        };
+        if let Err(err) = result {
             log::warn!("omarchy-bible: failed to save settings: {err}");
         }
     }
@@ -285,6 +312,13 @@ impl Store {
 
     pub fn close_overlay(&self) {
         self.overlay.set(Overlay::None);
+    }
+
+    /// Whether Escape or Back has anything to close.
+    pub fn can_escape(&self) -> bool {
+        self.hebrew_verse.get_untracked().is_some()
+            || self.select_mode.get_untracked()
+            || self.overlay.get_untracked() != Overlay::None
     }
 
     /// Escape: the Hebrew page, then the selection, then the overlay.

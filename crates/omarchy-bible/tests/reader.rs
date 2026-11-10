@@ -33,7 +33,22 @@ impl Drop for App {
     }
 }
 
+/// The desktop window the app opens in.
+const DESKTOP: (f32, f32) = (980.0, 760.0);
+/// A Pixel 8 (1080×2400 px at 420 dpi) in points.
+const PHONE: (f32, f32) = (411.0, 914.0);
+/// A Pixel Tablet (2560×1600 px at 320 dpi), landscape, in points.
+const TABLET: (f32, f32) = (1280.0, 800.0);
+
 fn start_with(name: &str, settings_json: Option<&str>) -> App {
+    start_sized(name, settings_json, DESKTOP)
+}
+
+fn start_on(name: &str, size: (f32, f32)) -> App {
+    start_sized(name, None, size)
+}
+
+fn start_sized(name: &str, settings_json: Option<&str>, size: (f32, f32)) -> App {
     let dir =
         std::env::temp_dir().join(format!("omarchy-bible-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -47,8 +62,7 @@ fn start_with(name: &str, settings_json: Option<&str>) -> App {
         settings_path: Some(path.clone().into()).into(),
     });
     let app = Headless::start(EngineConfig {
-        // The desktop window the app opens in.
-        viewport: Size::new(Points(980.0), Points(760.0)),
+        viewport: Size::new(Points(size.0), Points(size.1)),
         ..EngineConfig::new(root)
     })
     .unwrap();
@@ -385,5 +399,148 @@ fn verses_far_down_a_long_chapter_render_their_own_text() -> Result<(), String> 
     app.press("id:next-ch")?;
     app.wait_for("120/150")?;
     assert_cells_match(&app, "Ps", 120);
+    Ok(())
+}
+
+// ── Phone and tablet ─────────────────────────────────────────────────
+
+/// Whether a view matching `selector` is on screen (not hidden or clipped).
+fn on_screen(app: &App, selector: &str) -> bool {
+    app.screen().matches(selector).unwrap_or(false)
+}
+
+#[test]
+fn phone_header_moves_tools_into_a_menu() -> Result<(), String> {
+    let mut app = start_on("phone-header", PHONE);
+    app.wait_for("舊約 · 創")?;
+    app.wait_for("1/50")?;
+    // The desktop's row of tools would overflow a phone: it is hidden, and
+    // the ⋯ menu holds them.
+    assert!(
+        !on_screen(&app, "id:mode-single"),
+        "{:?}",
+        app.screen().texts()
+    );
+    assert!(!on_screen(&app, "id:open-settings"));
+    assert!(on_screen(&app, "id:tools-menu"));
+    assert!(on_screen(&app, "id:jump-input"));
+    app.wait_for("起初，神創造天地。")?;
+    Ok(())
+}
+
+#[test]
+fn phone_menu_switches_translation_and_opens_tools() -> Result<(), String> {
+    let mut app = start_on("phone-menu", PHONE);
+    app.press("id:tools-menu")?;
+    app.press("id:menu-kjv")?;
+    app.wait_for_gone("起初，神創造天地。", std::time::Duration::from_secs(2))?;
+    app.wait_for("In the beginning God created the heaven and the earth.")?;
+    app.press("id:tools-menu")?;
+    app.press("id:menu-compare")?;
+    app.wait_for("起初，神創造天地。")?;
+    app.press("id:tools-menu")?;
+    app.press("id:menu-search")?;
+    app.wait_for("id:search-panel")?;
+    app.type_text("id:search-input", "神愛世人")?;
+    // Results come after the typing debounce.
+    app.wait_for("約翰福音 3:16")?;
+    app.press("約翰福音 3:16")?;
+    app.wait_for("3/21")?;
+    app.press("id:tools-menu")?;
+    app.press("id:menu-settings")?;
+    app.wait_for("id:settings-panel")?;
+    Ok(())
+}
+
+#[test]
+fn phone_overlays_fill_the_screen() -> Result<(), String> {
+    let mut app = start_on("phone-sheets", PHONE);
+    app.press("id:book-picker-btn")?;
+    app.wait_for("選擇書卷")?;
+    // On a touch screen the full name shows under each abbreviation.
+    app.wait_for("創世記")?;
+    app.press("id:book-tab-nt")?;
+    app.press("label:約翰福音")?;
+    app.wait_for("新約 · 約")?;
+    app.press("id:chapter-picker-btn")?;
+    app.wait_for("選擇章節")?;
+    app.press("id:chapter-3")?;
+    app.wait_for("3/21")?;
+    Ok(())
+}
+
+#[test]
+fn phone_back_steps_out_before_leaving() -> Result<(), String> {
+    let mut app = start_on("phone-back", PHONE);
+    // Back closes an open sheet (the dialog takes it)...
+    app.press("id:book-picker-btn")?;
+    app.wait_for("選擇書卷")?;
+    app.back()?;
+    app.wait_for_gone("選擇書卷", std::time::Duration::from_secs(2))?;
+    // ...leaves select mode...
+    app.press("id:tools-menu")?;
+    app.press("id:menu-select")?;
+    app.wait_for("取消")?;
+    app.back()?;
+    app.wait_for_gone("id:selection-summary", std::time::Duration::from_secs(2))?;
+    // ...and leaves the Hebrew page for the reader.
+    app.press("label:希伯來文形態 >> nth=0")?;
+    app.wait_for("創世記 1:1 · 希伯來文")?;
+    app.back()?;
+    app.wait_for("1/50")?;
+    app.wait_for("id:verses")?;
+    Ok(())
+}
+
+#[test]
+fn phone_hebrew_detail_sits_under_the_words() -> Result<(), String> {
+    let mut app = start_on("phone-hebrew", PHONE);
+    app.press("label:希伯來文形態 >> nth=0")?;
+    app.wait_for("bərēʾšiyt")?;
+    app.press("id:hebrew-word-0-0")?;
+    app.wait_for("詞詳情")?;
+    app.wait_for("Strong's")?;
+    Ok(())
+}
+
+#[test]
+fn tablet_keeps_the_regular_layout() -> Result<(), String> {
+    let mut app = start_on("tablet", TABLET);
+    app.wait_for("1/50")?;
+    // Wide enough for the row of tools: no ⋯ menu.
+    assert!(
+        on_screen(&app, "id:mode-single"),
+        "{:?}",
+        app.screen().texts()
+    );
+    assert!(on_screen(&app, "id:open-settings"));
+    assert!(!on_screen(&app, "id:tools-menu"));
+    app.press("id:mode-single")?;
+    app.wait_for_gone(
+        "In the beginning God created the heaven and the earth.",
+        std::time::Duration::from_secs(2),
+    )?;
+    app.press("id:open-search")?;
+    app.type_text("id:search-input", "神愛世人")?;
+    // Results come after the typing debounce.
+    app.wait_for("約翰福音 3:16")?;
+    app.press("約翰福音 3:16")?;
+    app.wait_for("3/21")?;
+    Ok(())
+}
+
+#[test]
+fn rotating_reflows_between_layouts() -> Result<(), String> {
+    let mut app = start_on("rotate", PHONE);
+    assert!(on_screen(&app, "id:tools-menu"));
+    // A phone turned sideways (914 pt wide) gets the regular layout...
+    app.set_viewport(Size::new(Points(PHONE.1), Points(PHONE.0)))?;
+    app.wait_for("id:open-settings")?;
+    assert!(!on_screen(&app, "id:tools-menu"));
+    // ...and back.
+    app.set_viewport(Size::new(Points(PHONE.0), Points(PHONE.1)))?;
+    app.wait_for("id:tools-menu")?;
+    // The reading position survives the reflow.
+    assert_eq!(position(&app), "1/50");
     Ok(())
 }
