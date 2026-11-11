@@ -41,9 +41,10 @@ public:
         setWindowFlag(Qt::WindowDoesNotAcceptFocus);
         // A just-connected output is announced before the compositor can
         // place a fullscreen window on it; placing at once lands on the
-        // operator's screen. Give the output a moment first.
+        // operator's screen, and Omarchy's bar starts on the new output a
+        // moment later. Wait until both are up.
         QObject::connect(qApp, &QGuiApplication::screenAdded, this, [this] {
-            QTimer::singleShot(800, this, [this] { apply(state); });
+            QTimer::singleShot(2500, this, [this] { apply(state); });
         });
         QObject::connect(qApp, &QGuiApplication::screenRemoved, this, [this](QScreen *screen) {
             if (screen == output) { output = nullptr; hide(); }

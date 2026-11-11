@@ -44,7 +44,7 @@ cargo run -p omarchy-bible
 
 Linux 的 Wayland 視窗位置受 compositor 管理，`QWindow::setScreen` 與全螢幕是請求，最終仍依 compositor 政策；必要時手動把投影視窗移至目標螢幕。macOS 的實體外接顯示需另外實機驗證。
 
-拔除目標螢幕後會隱藏／重新選擇仍存在的外接螢幕，不會在自動模式回退主螢幕。重新接上時會等約 0.8 秒、待 compositor 備妥該輸出再放上投影；放好後會離開再進入全螢幕一次，讓 Omarchy 狀態列退到投影下方（直接以全螢幕開啟的視窗不會觸發狀態列的更新）；已用 Hyprland 虛擬螢幕（`hyprctl output create headless`）測過自動選擇、全螢幕、翻頁鍵、黑屏與三次拔插。
+拔除目標螢幕後會隱藏／重新選擇仍存在的外接螢幕，不會在自動模式回退主螢幕。重新接上時會等約 2.5 秒、待 compositor 與狀態列都備妥該輸出再放上投影；放好後會離開再進入全螢幕一次，讓 Omarchy 狀態列退到投影下方（直接以全螢幕開啟的視窗不會觸發狀態列的更新）；已用 Hyprland 虛擬螢幕（`hyprctl output create headless`）測過自動選擇、全螢幕、翻頁鍵、黑屏與三次拔插。
 
 ## Android（手機／平板）
 
