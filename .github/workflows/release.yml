@@ -125,10 +125,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install Qt and create-dmg
-        run: |
-          brew install qt create-dmg
-          echo "$(brew --prefix qt)/bin" >> "$GITHUB_PATH"
+      - name: Install create-dmg
+        run: brew install create-dmg
 
       - name: Build
         run: |

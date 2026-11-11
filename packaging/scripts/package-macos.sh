@@ -32,6 +32,8 @@ mkdir -p "$STAGE" "$DIST"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/omarchy-bible"
 chmod 755 "$APP/Contents/MacOS/omarchy-bible"
+# AppKit audience helper (build-projector.sh): only system frameworks, so
+# nothing else needs bundling.
 cp "$(dirname "$BINARY")/omarchy-bible-projector" "$APP/Contents/MacOS/omarchy-bible-projector"
 chmod 755 "$APP/Contents/MacOS/omarchy-bible-projector"
 
@@ -42,17 +44,12 @@ if [[ -f "$MACOS_SRC/AppIcon.icns" ]]; then
   cp "$MACOS_SRC/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 fi
 
-# Bundle the helper’s Qt libraries, not a dependency on this build machine.
-MACDEPLOYQT="${MACDEPLOYQT:-$(command -v macdeployqt || true)}"
-[[ -n "$MACDEPLOYQT" ]] || { echo "macdeployqt required (brew install qt)" >&2; exit 1; }
-"$MACDEPLOYQT" "$APP" "-executable=$APP/Contents/MacOS/omarchy-bible-projector" -always-overwrite
-
 # Copy finished .app into dist/ for local inspection
 rm -rf "$DIST/$APP_NAME"
 cp -R "$APP" "$DIST/$APP_NAME"
 echo "wrote $DIST/$APP_NAME"
 
-# --- tar.gz (the app bundle, including the helper and Qt frameworks) ---
+# --- tar.gz (the app bundle, including the helper) ---
 TAR_STAGE="$STAGE/tar"
 mkdir -p "$TAR_STAGE"
 cp -R "$APP" "$TAR_STAGE/$APP_NAME"

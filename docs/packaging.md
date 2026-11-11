@@ -15,11 +15,11 @@ yay -S omarchy-bible-bin
 - Linux：`omarchy-bible-VERSION-x86_64.tar.gz`（reader、`omarchy-bible-projector`、`.desktop`、`LICENSE`）
 - macOS Apple Silicon：
   - `omarchy-bible-VERSION-macos-arm64.dmg` — 建議：拖曳 `Omarchy Bible.app`（顯示名稱「聖經」）到 Applications。**未簽名**：下載後請在 Finder 對 DMG／App **右鍵 → 打開**（勿雙擊，否則 Gatekeeper 可能直接擋）。
-  - `omarchy-bible-VERSION-macos-arm64.tar.gz` — `.app` bundle + `LICENSE`，包含投影 helper 與 Qt frameworks
+  - `omarchy-bible-VERSION-macos-arm64.tar.gz` — `.app` bundle + `LICENSE`，包含投影 helper（AppKit，只用系統 framework）
 
-Linux：把 `omarchy-bible` 與 `omarchy-bible-projector` 放到 `PATH` 的同一個目錄。`.desktop` 只給 Linux 包裝用。macOS 優先用 DMG 裝 `.app`；tar.gz 也打包整個 `.app`，避免投影 helper 依賴建置機的 Homebrew Qt 路徑。
+Linux：把 `omarchy-bible` 與 `omarchy-bible-projector` 放到 `PATH` 的同一個目錄。`.desktop` 只給 Linux 包裝用。macOS 優先用 DMG 裝 `.app`；tar.gz 也打包整個 `.app`，投影 helper 與 reader 放在一起。
 
-建置桌面投影 helper 需 Qt 6 開發工具：Arch `qt6-base`；Ubuntu `qt6-base-dev qt6-base-dev-tools qmake6`；macOS `brew install qt`。先 `cargo build --release -p omarchy-bible`，再 `bash packaging/scripts/build-projector.sh release`，最後執行打包腳本。Android 的特殊 host 打包方式見 [projection.md](projection.md)。
+建置桌面投影 helper 需 Qt 6 開發工具：Arch `qt6-base`；Ubuntu `qt6-base-dev qt6-base-dev-tools qmake6`；macOS 只需 Xcode（或 Command Line Tools）的 `swiftc`，helper 是 AppKit，不需 Homebrew 套件。先 `cargo build --release -p omarchy-bible`，再 `bash packaging/scripts/build-projector.sh release`，最後執行打包腳本。Android 的特殊 host 打包方式見 [projection.md](projection.md)。
 
 ## 發一版
 

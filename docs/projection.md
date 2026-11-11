@@ -33,7 +33,7 @@ NSH 0.4.0 尚未提供多視窗 API。app 自己附帶 audience helper（Linux�
 
 ```bash
 # Linux：只需 Native Shell 本來就要的 GTK 4 開發套件（Arch：gtk4；Ubuntu：libgtk-4-dev）
-# macOS helper：見 native/projector/macos/
+# macOS：只需 Xcode 的 swiftc（AppKit helper，native/projector/macos/）
 cargo build -p omarchy-bible
 bash packaging/scripts/build-projector.sh debug
 cargo run -p omarchy-bible
@@ -43,7 +43,9 @@ cargo run -p omarchy-bible
 
 自動模式選擇非系統主螢幕；只接一台時不會搶佔它。可明確選螢幕 0 預覽，Linux 上螢幕 0 是 compositor 列出的第一個輸出（通常即操作台），其他編號按 GDK 的 monitor list 排序，狀態列回報實際螢幕名稱與尺寸。操作台若不在系統主螢幕，請手動選擇正確目標。
 
-Linux 的 Wayland 視窗位置受 compositor 管理，`gtk_window_fullscreen_on_monitor` 是請求，最終仍依 compositor 政策；必要時手動把投影視窗移至目標螢幕。macOS 的實體外接顯示需另外實機驗證。
+Linux 的 Wayland 視窗位置受 compositor 管理，`gtk_window_fullscreen_on_monitor` 是請求，最終仍依 compositor 政策；必要時手動把投影視窗移至目標螢幕。macOS 的 helper（`native/projector/macos/main.swift`）用 AppKit：每次放置建立一個無邊框、覆蓋整個螢幕（含選單列與 Dock）的視窗，不啟用 helper、不搶操作台焦點，不顯示游標，也沒有開關動畫；螢幕 0 是有選單列的主螢幕，自動模式取第一個其他螢幕。螢幕設定變更（拔插、改解析度）後約 1 秒重新放置。已在 macOS 26 單螢幕上測過螢幕 0 預覽、雙版本對照、翻頁、黑屏、自動模式「找不到外接螢幕」與 EOF 結束；實體外接顯示的拔插仍需實機驗證。
+
+macOS 若無法讓測試程式截圖或送按鍵（隱私權限），可設 `OMARCHY_BIBLE_PROJECTOR_SELFTEST=/某目錄`：helper 每次顯示後把自己視窗的畫面存成 PNG，並對視窗送一次真實的 key-down 事件，檢查 `@key` 轉送。reader 不會設定這個變數。
 
 拔除目標螢幕後會隱藏／重新選擇仍存在的外接螢幕，不會在自動模式回退主螢幕。重新接上時會等約 2.5 秒、待 compositor 與狀態列都備妥該輸出再放上投影；放好後會離開再進入全螢幕一次，讓 Omarchy 狀態列退到投影下方（直接以全螢幕開啟的視窗不會觸發狀態列的更新）；已用 Hyprland 虛擬螢幕（`hyprctl output create headless`）測過自動選擇、全螢幕、翻頁鍵、黑屏與三次拔插。GTK 版另會等新螢幕回報名稱與尺寸（最多再 10 秒）才放上；`OMARCHY_BIBLE_PROJECTOR_DEBUG=1` 會在 stderr 印出放置過程（不含經文）。
 
