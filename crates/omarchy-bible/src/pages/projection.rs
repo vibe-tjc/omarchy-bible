@@ -58,7 +58,7 @@ pub fn projection_panel() -> View {
         )
         .child(label(move || {
             if s.projection.with(|p| p.multiple) {
-                "多節：選取的經節依序排入同一張，放不下時自動分頁。"
+                "多節：從目前這節起排滿一張；有選取時只排選取的經節。"
             } else {
                 "單節：每張一節。點經文指定，或用「選擇」選取數節。"
             }

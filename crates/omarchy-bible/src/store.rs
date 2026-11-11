@@ -131,6 +131,10 @@ pub struct Store {
     /// Translations sent to the audience, in bundled order. Empty follows
     /// the reading pane. Kept for this run only, like 多節.
     projection_lanes: Signal<Vec<TranslationId>>,
+    /// The multi-verse page filled from the focused verse when nothing is
+    /// selected: (book index, chapter, verse numbers). Next/previous page
+    /// continue from its edges.
+    projection_page: Signal<Option<(usize, u32, Vec<u32>)>>,
     pub output: Stored<crate::projection::NativeOutput>,
     system_dark: Signal<bool>,
 }
@@ -180,6 +184,7 @@ impl Store {
             focused_verse: signal(1),
             projection_chapter: signal(false),
             projection_lanes: signal(Vec::new()),
+            projection_page: signal(None),
             output: stored(crate::projection::NativeOutput::default()),
             system_dark: signal(system_dark),
         }
@@ -585,22 +590,57 @@ impl Store {
     }
 
     /// Builds the selected verses in reading order, or the focused verse.
-    /// `whole_chapter` is explicit: starting projection never silently sends
-    /// a whole chapter to the audience.
+    /// In multi mode with nothing selected, a full page starting at the
+    /// focused verse. `whole_chapter` is explicit: starting projection never
+    /// silently sends a whole chapter to the audience.
     pub fn prepare_projection(&self, whole_chapter: bool) {
+        self.prepare_projection_toward(whole_chapter, true);
+    }
+
+    /// `forward` false fills the multi-verse page backward, ending at the
+    /// focused verse (previous page), and then focuses its first verse.
+    fn prepare_projection_toward(&self, whole_chapter: bool, forward: bool) {
         self.projection_chapter.set(whole_chapter);
+        let lanes = untracked(|| self.projection_lanes());
+        let multiple = self.projection.with_untracked(|p| p.multiple);
         let mut numbers: Vec<u32> = self
             .selected
             .with_untracked(|s| s.iter().map(|u| u.number).collect());
         numbers.sort_unstable();
         numbers.dedup();
+        let mut page = None;
         if whole_chapter {
             numbers.clear();
         } else if numbers.is_empty() {
-            numbers.push(self.focused_verse.get_untracked());
+            let focused = self.focused_verse.get_untracked();
+            if multiple {
+                numbers = self.chapter.with_untracked(|c| {
+                    crate::projection::fill_page(&c.0, &lanes, focused, forward)
+                });
+            }
+            if numbers.is_empty() {
+                numbers.push(focused);
+            }
+            if multiple {
+                let first = numbers[0];
+                if first != focused {
+                    batch(|| {
+                        self.focused_verse.set(first);
+                        self.highlight.set(Some(first));
+                        self.scroll_request.update(|(n, v)| {
+                            *n += 1;
+                            *v = Some(first);
+                        });
+                    });
+                }
+                page = Some((
+                    self.book_index.get_untracked(),
+                    self.chapter.with_untracked(|c| c.0.chapter),
+                    numbers.clone(),
+                ));
+            }
         }
-        let lanes = untracked(|| self.projection_lanes());
-        let multiple = self.projection.with_untracked(|p| p.multiple);
+        self.projection_page.set(page);
         let slides = self
             .chapter
             .with_untracked(|c| crate::projection::make_slides(&c.0, &lanes, &numbers, multiple));
@@ -632,13 +672,29 @@ impl Store {
         self.projection.update(|p| p.step(delta));
     }
     /// Moves projection to the verse before or after what is projected now,
-    /// crossing chapter and book boundaries. The result is always a single
-    /// verse (the selection is cleared), and a running projection keeps
-    /// running with the new verse.
+    /// crossing chapter and book boundaries. The selection is cleared. In
+    /// single mode the result is one verse; in multi mode it is the next
+    /// full page (or the previous one, packed backward). A running
+    /// projection keeps running with the new slides.
     pub fn projection_verse(&self, delta: i32) {
         let mut anchor: Vec<u32> = self
             .selected
             .with_untracked(|s| s.iter().map(|u| u.number).collect());
+        if anchor.is_empty() {
+            // The current multi-verse page, while it is still what the
+            // reader focuses (a tap elsewhere starts from that verse).
+            let here = (
+                self.book_index.get_untracked(),
+                self.chapter.with_untracked(|c| c.0.chapter),
+            );
+            let focused = self.focused_verse.get_untracked();
+            if let Some((book, chapter, page)) = self.projection_page.get_untracked()
+                && (book, chapter) == here
+                && page.first() == Some(&focused)
+            {
+                anchor = page;
+            }
+        }
         anchor.sort_unstable();
         let from = if delta < 0 {
             anchor.first().copied()
@@ -692,7 +748,7 @@ impl Store {
                 self.goto(after.0, after.1, edge);
             }
         }
-        self.prepare_projection(false);
+        self.prepare_projection_toward(false, delta >= 0);
     }
     /// The remote's next/previous: the next page of a long slide set while
     /// there is one, otherwise the neighbouring verse.

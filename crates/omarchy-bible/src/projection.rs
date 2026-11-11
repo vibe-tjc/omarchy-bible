@@ -98,6 +98,63 @@ fn chunks(text: &str) -> Vec<String> {
     result
 }
 
+/// The audience text of one verse in the given lanes; empty when no lane
+/// has the verse.
+fn verse_body(verse: &bible_core::Verse, lanes: &[TranslationId]) -> String {
+    let mut body = String::new();
+    for (lane, text) in verse.texts_for(lanes) {
+        if !body.is_empty() {
+            body.push_str("\n\n");
+        }
+        if lanes.len() > 1 {
+            body.push_str(lane.label());
+            body.push('\n');
+        }
+        body.push_str(&format!("{}  {}", verse.number, text));
+    }
+    body
+}
+
+/// The verses of one full multi-verse page, in chapter order. Forward, the
+/// page starts at `from` and takes following verses while they fit;
+/// backward, it ends at `from` and takes earlier verses while they fit.
+/// `from` is always included, even when it alone needs several slides.
+/// Uses the same budget as `make_slides`, so the result packs into one
+/// slide unless `from` alone overflows. Empty when `from` is not in the
+/// chapter.
+pub fn fill_page(chapter: &Chapter, lanes: &[TranslationId], from: u32, forward: bool) -> Vec<u32> {
+    let verses: Vec<(u32, String)> = chapter
+        .verses
+        .iter()
+        .map(|v| (v.number, verse_body(v, lanes)))
+        .filter(|(_, body)| !body.is_empty())
+        .collect();
+    let Some(at) = verses.iter().position(|(n, _)| *n == from) else {
+        return Vec::new();
+    };
+    let units = |body: &str| body.chars().map(weight).sum::<usize>();
+    let mut page = vec![from];
+    let mut total = units(&verses[at].1);
+    if total <= PAGE_UNITS {
+        let order: Box<dyn Iterator<Item = &(u32, String)>> = if forward {
+            Box::new(verses[at + 1..].iter())
+        } else {
+            Box::new(verses[..at].iter().rev())
+        };
+        for (number, body) in order {
+            // `make_slides` joins verses with a blank line (2 units).
+            let next = total + units(body) + 2;
+            if units(body) > PAGE_UNITS || next > PAGE_UNITS {
+                break;
+            }
+            total = next;
+            page.push(*number);
+        }
+    }
+    page.sort_unstable();
+    page
+}
+
 /// Selected verse numbers in chapter order. Empty input means the whole
 /// chapter (only callers explicitly asking for the chapter use this).
 /// Single mode never mixes verses; multi mode packs bounded groups.
@@ -114,17 +171,7 @@ pub fn make_slides(
         .iter()
         .filter(|v| numbers.is_empty() || numbers.contains(&v.number))
     {
-        let mut body = String::new();
-        for (lane, text) in verse.texts_for(lanes) {
-            if !body.is_empty() {
-                body.push_str("\n\n");
-            }
-            if lanes.len() > 1 {
-                body.push_str(lane.label());
-                body.push('\n');
-            }
-            body.push_str(&format!("{}  {}", verse.number, text));
-        }
+        let body = verse_body(verse, lanes);
         if body.is_empty() {
             continue;
         }
@@ -319,6 +366,50 @@ mod tests {
         assert_eq!(p.index, 1);
         p.step(-99);
         assert_eq!(p.index, 0);
+    }
+    fn page_is_full(lanes: &[TranslationId], page: &[u32], extra: u32) {
+        let c = chapter();
+        assert_eq!(make_slides(&c, lanes, page, true).len(), 1, "{page:?} fits");
+        let mut more = page.to_vec();
+        more.push(extra);
+        more.sort_unstable();
+        assert_eq!(
+            make_slides(&c, lanes, &more, true).len(),
+            2,
+            "{more:?} overflows"
+        );
+    }
+    #[test]
+    fn fill_page_starts_at_the_verse_and_fills_forward() {
+        for lanes in [&[TranslationId::Cuv1919][..], TranslationId::ALL] {
+            let page = fill_page(&chapter(), lanes, 2, true);
+            assert_eq!(page[0], 2);
+            assert!(page.len() > 1, "more than one verse fits");
+            assert!(page.windows(2).all(|w| w[1] == w[0] + 1));
+            page_is_full(lanes, &page, page.last().unwrap() + 1);
+            // The next page continues right after this one.
+            let next = fill_page(&chapter(), lanes, page.last().unwrap() + 1, true);
+            assert_eq!(next[0], page.last().unwrap() + 1);
+        }
+    }
+    #[test]
+    fn fill_page_backward_ends_at_the_verse() {
+        for lanes in [&[TranslationId::Cuv1919][..], TranslationId::ALL] {
+            let page = fill_page(&chapter(), lanes, 20, false);
+            assert_eq!(*page.last().unwrap(), 20);
+            assert!(page.len() > 1);
+            assert!(page.windows(2).all(|w| w[1] == w[0] + 1));
+            page_is_full(lanes, &page, page[0] - 1);
+        }
+    }
+    #[test]
+    fn fill_page_stops_at_the_chapter_edges() {
+        let c = chapter();
+        let last = c.verses.last().unwrap().number;
+        let lanes = [TranslationId::Cuv1919];
+        assert_eq!(*fill_page(&c, &lanes, last, true).last().unwrap(), last);
+        assert_eq!(fill_page(&c, &lanes, 1, false), vec![1]);
+        assert!(fill_page(&c, &lanes, 999, true).is_empty());
     }
     #[test]
     fn bilingual_keeps_both_lanes() {

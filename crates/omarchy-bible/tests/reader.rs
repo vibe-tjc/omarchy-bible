@@ -559,7 +559,7 @@ fn projection_defaults_to_single_and_paginates_selection() -> Result<(), String>
     app.press("id:projection-prev")?;
     app.wait_for("創世記 1:1")?;
     app.press("id:projection-multiple")?;
-    app.wait_for("多節：選取的經節依序排入同一張，放不下時自動分頁。")?;
+    app.wait_for("多節：從目前這節起排滿一張；有選取時只排選取的經節。")?;
     // No output starts simply by opening the panel or changing the option.
     app.wait_for("尚未開始投影")?;
     app.wait_for("未投影")?;
@@ -636,6 +636,68 @@ fn next_verse_crosses_into_the_next_chapter() -> Result<(), String> {
     app.wait_for("創世記 2:1")?;
     app.press("id:projection-verse-prev")?;
     app.wait_for("創世記 1:31")?;
+    Ok(())
+}
+
+/// Opens the projection panel with one lane (和合本), then multi mode.
+fn open_multiple_projection(app: &mut App) -> Result<(), String> {
+    app.press("id:open-projection")?;
+    app.press("id:projection-lane-KJV")?;
+    app.press("id:projection-multiple")?;
+    app.wait_for("多節：從目前這節起排滿一張；有選取時只排選取的經節。")?;
+    Ok(())
+}
+
+#[test]
+fn multiple_without_a_selection_fills_a_page_from_the_focused_verse() -> Result<(), String> {
+    let mut app = start("projection-multi-fill");
+    open_multiple_projection(&mut app)?;
+    app.wait_for("創世記 1:1, 2, 3, 4, 5, 6, 7, 8, 9")?;
+    app.wait_for("第 1 / 1 張")?;
+    // Next page continues after the last verse shown.
+    app.press("id:projection-verse-next")?;
+    app.wait_for("創世記 1:10, 11, 12, 13, 14, 15")?;
+    app.press("id:projection-verse-prev")?;
+    app.wait_for("創世記 1:1, 2, 3, 4, 5, 6, 7, 8, 9")?;
+    app.press("id:projection-verse-prev")?;
+    app.wait_for("已是第一節")?;
+    // Back in single mode, one verse per slide as before.
+    app.press("id:projection-single")?;
+    app.wait_for("創世記 1:1")?;
+    app.wait_for("第 1 / 1 張")?;
+    app.press("id:projection-verse-next")?;
+    app.wait_for("創世記 1:2")?;
+    Ok(())
+}
+
+#[test]
+fn multiple_previous_page_packs_backward_across_chapters() -> Result<(), String> {
+    let mut app = start("projection-multi-back");
+    app.type_text("id:jump-input", "1:1:31")?;
+    app.press("id:jump-go")?;
+    open_multiple_projection(&mut app)?;
+    app.wait_for("創世記 1:31")?;
+    app.press("id:projection-verse-next")?;
+    app.wait_for("創世記 2:1, 2, 3, 4, 5, 6, 7")?;
+    // The previous page ends right before 2:1 and fills backward.
+    app.press("id:projection-verse-prev")?;
+    app.wait_for("創世記 1:27, 28, 29, 30, 31")?;
+    app.press("id:projection-verse-next")?;
+    app.wait_for("創世記 2:1, 2, 3, 4, 5, 6, 7")?;
+    Ok(())
+}
+
+#[test]
+fn multiple_with_a_selection_projects_only_the_selection() -> Result<(), String> {
+    let mut app = start("projection-multi-selection");
+    app.press("id:toggle-select")?;
+    app.press("起初，神創造天地。")?;
+    app.press("text:/^地是空虛混沌/")?;
+    app.press("id:select-project")?;
+    app.press("id:projection-lane-KJV")?;
+    app.press("id:projection-multiple")?;
+    app.wait_for("創世記 1:1, 2")?;
+    app.wait_for("第 1 / 1 張")?;
     Ok(())
 }
 
