@@ -16,7 +16,7 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
-mod linux {
+pub(crate) mod linux {
     use gtk::{cairo, gdk, glib, pango, prelude::*};
     use gtk4 as gtk;
     use serde_json::{Value, json};
@@ -56,7 +56,7 @@ mod linux {
         blank: bool,
     }
 
-    enum Plan {
+    pub enum Plan {
         Off,
         Fail(&'static str),
         Show(usize, Slide),
@@ -64,7 +64,7 @@ mod linux {
 
     /// Screen 0 is the operator's (the compositor's first output). Auto (-1)
     /// takes the first other screen and never falls back to the only one.
-    fn plan(state: &Value, screens: usize) -> Plan {
+    pub fn plan(state: &Value, screens: usize) -> Plan {
         if !state["active"].as_bool().unwrap_or(false) {
             return Plan::Off;
         }
@@ -384,6 +384,28 @@ mod linux {
         }
     }
 
+    fn ready(monitor: &gdk::Monitor) -> bool {
+        monitor.connector().is_some() && monitor.geometry().width() > 0
+    }
+
+    /// Re-evaluate after `delay`, then every 500 ms (up to `tries` more)
+    /// until every listed monitor reports its connector and size.
+    fn when_ready(weak: std::rc::Weak<RefCell<Projector>>, delay: Duration, tries: u32) {
+        glib::timeout_add_local_once(delay, move || {
+            let Some(shared) = weak.upgrade() else { return };
+            let pending = {
+                let p = shared.borrow();
+                (0..p.screens.count()).any(|i| p.screens.monitor(i).is_some_and(|m| !ready(&m)))
+            };
+            if pending && tries > 0 {
+                trace(|| "new monitor not described yet; waiting".into());
+                when_ready(weak, Duration::from_millis(500), tries - 1);
+            } else {
+                reapply(&shared);
+            }
+        });
+    }
+
     fn reapply(shared: &Shared) {
         let state = shared.borrow().state.clone();
         apply(shared, state);
@@ -447,12 +469,9 @@ mod linux {
                     // A just-connected output is announced before the
                     // compositor can place a fullscreen window on it, and
                     // Omarchy's bar starts there a moment later. Wait.
-                    let weak = Rc::downgrade(&shared);
-                    glib::timeout_add_local_once(Duration::from_millis(2500), move || {
-                        if let Some(shared) = weak.upgrade() {
-                            reapply(&shared)
-                        }
-                    });
+                    // GDK may list the monitor before it knows its
+                    // connector and size; place only once it does.
+                    when_ready(Rc::downgrade(&shared), Duration::from_millis(2500), 20);
                 }
             });
         }
@@ -503,5 +522,39 @@ mod linux {
         });
         status("投影視窗已準備；等候外接螢幕");
         glib::MainLoop::new(None, false).run();
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::linux::{Plan, plan};
+    use serde_json::json;
+
+    fn state(screen: i64) -> serde_json::Value {
+        json!({"active": true, "screen": screen, "index": 0,
+               "slides": [{"reference": "創世記 1:1", "text": "起初"}]})
+    }
+
+    #[test]
+    fn auto_never_takes_the_only_screen() {
+        assert!(matches!(plan(&state(-1), 1), Plan::Fail(_)));
+        assert!(matches!(plan(&state(-1), 2), Plan::Show(1, _)));
+    }
+
+    #[test]
+    fn explicit_screen_zero_previews_and_bad_index_fails() {
+        assert!(matches!(plan(&state(0), 1), Plan::Show(0, _)));
+        assert!(matches!(plan(&state(5), 2), Plan::Fail(_)));
+    }
+
+    #[test]
+    fn inactive_and_limits() {
+        assert!(matches!(plan(&json!({"active": false}), 2), Plan::Off));
+        let mut long = state(0);
+        long["slides"][0]["text"] = json!("字".repeat(16001));
+        assert!(matches!(plan(&long, 1), Plan::Fail("投影資料過長")));
+        let mut missing = state(0);
+        missing["index"] = json!(3);
+        assert!(matches!(plan(&missing, 1), Plan::Fail("沒有可投影的經文")));
     }
 }
