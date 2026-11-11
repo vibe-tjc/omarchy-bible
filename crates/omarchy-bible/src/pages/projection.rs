@@ -8,6 +8,7 @@ use crate::store::{Store, store};
 use crate::ui::controls::{chip, label, nav_button, panel, title};
 use crate::ui::layout::target;
 use crate::ui::theme::{reader, theme};
+use bible_core::TranslationId;
 use nsh_base::button;
 use nsh_core::prelude::*;
 
@@ -60,6 +61,29 @@ pub fn projection_panel() -> View {
                 "多節：選取的經節依序排入同一張，放不下時自動分頁。"
             } else {
                 "單節：每張一節。點經文指定，或用「選擇」選取數節。"
+            }
+        }))
+        .child(section("版本"))
+        .child(
+            view()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap_2()
+                .children(TranslationId::ALL.iter().map(move |&id| {
+                    segment(
+                        format!("projection-lane-{}", id.label()),
+                        id.label(),
+                        move || s.projection_lanes().contains(&id),
+                        move || s.toggle_projection_lane(id),
+                    )
+                })),
+        )
+        .child(label(move || {
+            if s.projection_lanes().len() > 1 {
+                "對照：已開啟的版本依序上下並列。點版本可開關，至少保留一個。"
+            } else {
+                "單一版本。再點其他版本即可加入對照。"
             }
         }))
         .child(section("輸出螢幕"))
@@ -307,7 +331,7 @@ fn section(name: &'static str) -> impl IntoElement {
 
 /// A chip that reads as one option of a pair: outlined, filled when on.
 fn segment(
-    id: &'static str,
+    id: impl Into<String>,
     name: &'static str,
     on: impl Fn() -> bool + 'static,
     press: impl Fn() + 'static,
@@ -329,7 +353,7 @@ fn segment(
         .focus(|s| s.outline(px(2.0)).outline_color(move || theme().ring))
         .child(
             text(name)
-                .test_id(id)
+                .test_id(&id.into())
                 .text_sm()
                 .number_of_lines(1)
                 .text_color(move || {

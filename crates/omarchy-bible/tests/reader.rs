@@ -638,3 +638,20 @@ fn next_verse_crosses_into_the_next_chapter() -> Result<(), String> {
     app.wait_for("創世記 1:31")?;
     Ok(())
 }
+
+#[test]
+fn projection_versions_switch_between_one_and_a_comparison() -> Result<(), String> {
+    let mut app = start("projection-versions");
+    app.press("id:open-projection")?;
+    app.wait_for("text:/^和合本 1919 神版\n1  起初/")?;
+    app.press("id:projection-lane-KJV")?;
+    app.wait_for("text:/^1  起初，神創造天地。$/")?;
+    app.press("id:projection-lane-和合本 1919 神版")?;
+    app.wait_for("至少要投影一個版本")?;
+    app.wait_for("text:/^1  起初，神創造天地。$/")?;
+    app.press("id:projection-lane-KJV")?;
+    app.wait_for("text:/^和合本 1919 神版\n1  起初/")?;
+    app.press("id:projection-lane-和合本 1919 神版")?;
+    app.wait_for("text:/^1  In the beginning/")?;
+    Ok(())
+}

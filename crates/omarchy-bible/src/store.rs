@@ -128,6 +128,9 @@ pub struct Store {
     pub projection_status: Signal<String>,
     pub focused_verse: Signal<u32>,
     projection_chapter: Signal<bool>,
+    /// Translations sent to the audience, in bundled order. Empty follows
+    /// the reading pane. Kept for this run only, like 多節.
+    projection_lanes: Signal<Vec<TranslationId>>,
     pub output: Stored<crate::projection::NativeOutput>,
     system_dark: Signal<bool>,
 }
@@ -176,6 +179,7 @@ impl Store {
             projection_status: signal("尚未開始投影".to_owned()),
             focused_verse: signal(1),
             projection_chapter: signal(false),
+            projection_lanes: signal(Vec::new()),
             output: stored(crate::projection::NativeOutput::default()),
             system_dark: signal(system_dark),
         }
@@ -595,7 +599,7 @@ impl Store {
         } else if numbers.is_empty() {
             numbers.push(self.focused_verse.get_untracked());
         }
-        let lanes = self.lanes_untracked();
+        let lanes = untracked(|| self.projection_lanes());
         let multiple = self.projection.with_untracked(|p| p.multiple);
         let slides = self
             .chapter
@@ -722,6 +726,46 @@ impl Store {
             p.revision += 1;
         });
         self.prepare_projection(self.projection_chapter.get_untracked());
+    }
+    /// The translations projected now: the panel's choice, or the reading
+    /// pane's until one is made.
+    pub fn projection_lanes(&self) -> Vec<TranslationId> {
+        let chosen = self.projection_lanes.get();
+        if chosen.is_empty() {
+            self.settings.with(|s| s.view_mode.lanes())
+        } else {
+            chosen
+        }
+    }
+    /// Turns one translation on or off for the audience and re-sends what
+    /// is projected. Several on means a comparison in bundled order; the
+    /// last one cannot be turned off.
+    pub fn toggle_projection_lane(&self, id: TranslationId) {
+        let mut lanes = untracked(|| self.projection_lanes());
+        if lanes.contains(&id) {
+            if lanes.len() == 1 {
+                self.projection_status.set("至少要投影一個版本".into());
+                return;
+            }
+            lanes.retain(|&l| l != id);
+        } else {
+            lanes.push(id);
+        }
+        let lanes: Vec<TranslationId> = TranslationId::ALL
+            .iter()
+            .copied()
+            .filter(|l| lanes.contains(l))
+            .collect();
+        self.projection_lanes.set(lanes);
+        let index = self.projection.with_untracked(|p| p.index);
+        self.prepare_projection(self.projection_chapter.get_untracked());
+        // Keep the operator's place where the new set still has it.
+        self.projection.update(|p| {
+            if index < p.slides.len() {
+                p.index = index;
+            }
+            p.revision += 1;
+        });
     }
     /// Whether the slides are the explicit whole chapter (整章).
     pub fn projection_whole_chapter(&self) -> bool {
