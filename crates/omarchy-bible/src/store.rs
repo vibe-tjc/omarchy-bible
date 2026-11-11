@@ -627,6 +627,69 @@ impl Store {
     pub fn projection_step(&self, delta: i32) {
         self.projection.update(|p| p.step(delta));
     }
+    /// Moves projection to the verse before or after what is projected now,
+    /// crossing chapter and book boundaries. The result is always a single
+    /// verse (the selection is cleared), and a running projection keeps
+    /// running with the new verse.
+    pub fn projection_verse(&self, delta: i32) {
+        let mut anchor: Vec<u32> = self
+            .selected
+            .with_untracked(|s| s.iter().map(|u| u.number).collect());
+        anchor.sort_unstable();
+        let from = if delta < 0 {
+            anchor.first().copied()
+        } else {
+            anchor.last().copied()
+        }
+        .unwrap_or_else(|| self.focused_verse.get_untracked());
+        let numbers: Vec<u32> = self
+            .chapter
+            .with_untracked(|c| c.0.verses.iter().map(|v| v.number).collect());
+        let at = numbers.iter().position(|&n| n == from);
+        let book = self.book_index.get_untracked();
+        let chapter = self.chapter.with_untracked(|c| c.0.chapter);
+        let target = at.and_then(|i| {
+            let j = i as i64 + delta as i64;
+            (0..numbers.len() as i64)
+                .contains(&j)
+                .then(|| numbers[j as usize])
+        });
+        match target {
+            Some(verse) => self.goto(book, chapter, Some(verse)),
+            None => {
+                let before = (book, chapter);
+                if delta < 0 {
+                    self.prev_chapter();
+                } else {
+                    self.next_chapter();
+                }
+                let after = (
+                    self.book_index.get_untracked(),
+                    self.chapter.with_untracked(|c| c.0.chapter),
+                );
+                if after == before {
+                    self.projection_status.set(
+                        if delta < 0 {
+                            "已是第一節"
+                        } else {
+                            "已是最後一節"
+                        }
+                        .into(),
+                    );
+                    return;
+                }
+                let edge = self.chapter.with_untracked(|c| {
+                    if delta < 0 {
+                        c.0.verses.last().map(|v| v.number)
+                    } else {
+                        c.0.verses.first().map(|v| v.number)
+                    }
+                });
+                self.goto(after.0, after.1, edge);
+            }
+        }
+        self.prepare_projection(false);
+    }
     pub fn projection_blank(&self) {
         self.projection.update(|p| {
             p.blank = !p.blank;

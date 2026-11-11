@@ -593,3 +593,47 @@ fn phone_can_reach_projection_from_the_tools_menu() -> Result<(), String> {
     app.wait_for("id:tools-menu")?;
     Ok(())
 }
+
+#[test]
+fn projection_steps_to_neighbouring_verses_across_chapters() -> Result<(), String> {
+    let mut app = start("projection-verse-step");
+    app.press("text:/^地是空虛混沌/")?;
+    app.press("id:open-projection")?;
+    app.wait_for("創世記 1:2")?;
+    app.press("id:projection-verse-next")?;
+    app.wait_for("創世記 1:3")?;
+    app.press("id:projection-verse-prev")?;
+    app.press("id:projection-verse-prev")?;
+    app.wait_for("創世記 1:1")?;
+    app.press("id:projection-verse-prev")?;
+    app.wait_for("已是第一節")?;
+    app.wait_for("創世記 1:1")?;
+    Ok(())
+}
+
+#[test]
+fn next_verse_after_a_selection_starts_after_its_last_verse() -> Result<(), String> {
+    let mut app = start("projection-verse-after-selection");
+    app.press("id:toggle-select")?;
+    app.press("起初，神創造天地。")?;
+    app.press("text:/^地是空虛混沌/")?;
+    app.press("id:select-project")?;
+    app.press("id:projection-verse-next")?;
+    app.wait_for("創世記 1:3")?;
+    app.wait_for("1 / 1")?;
+    Ok(())
+}
+
+#[test]
+fn next_verse_crosses_into_the_next_chapter() -> Result<(), String> {
+    let mut app = start("projection-verse-chapter");
+    app.type_text("id:jump-input", "1:1:31")?;
+    app.press("id:jump-go")?;
+    app.press("id:open-projection")?;
+    app.wait_for("創世記 1:31")?;
+    app.press("id:projection-verse-next")?;
+    app.wait_for("創世記 2:1")?;
+    app.press("id:projection-verse-prev")?;
+    app.wait_for("創世記 1:31")?;
+    Ok(())
+}

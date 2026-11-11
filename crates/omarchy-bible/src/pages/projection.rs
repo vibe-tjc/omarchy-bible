@@ -31,6 +31,9 @@ pub fn projection_panel() -> View {
             .child(chip("projection-prev", "上一張", || false, move || s.projection_step(-1)))
             .child(label(move || s.projection.with(|p|format!("{} / {}", if p.slides.is_empty(){0}else{p.index+1},p.slides.len()))))
             .child(chip("projection-next", "下一張", || false, move || s.projection_step(1))))
+        .child(view().flex_row().gap_2()
+            .child(chip("projection-verse-prev", "上一節", || false, move || s.projection_verse(-1)))
+            .child(chip("projection-verse-next", "下一節", || false, move || s.projection_verse(1))))
         .child(label(move || s.projection_status.get()).test_id("projection-status"))
         .child(scroll().min_h(px(100.0)).max_h(px(240.0)).child(
             view().p_3().gap_2().bg(move || theme().background)
