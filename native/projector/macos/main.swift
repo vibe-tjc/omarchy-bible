@@ -81,9 +81,8 @@ func paint(_ size: NSSize, _ slide: Slide) -> Bool {
 func renderTest(_ args: [String]) -> Never {
     let w = args.count > 2 ? Int(args[2]) ?? 1920 : 1920, h = args.count > 3 ? Int(args[3]) ?? 1080 : 1080
     let path = args.count > 4 ? args[4] : "projection.png"
-    var slide = Slide(reference: "約翰福音 3:16",
-                      text: "16  神愛世人，甚至將他的獨生子賜給他們，叫一切信他的，不致滅亡，反得永生。\n\nFor God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.",
-                      blank: args.contains("--blank"))
+    var slide = Slide(text: "16  神愛世人，甚至將他的獨生子賜給他們，叫一切信他的，不致滅亡，反得永生。\n\nFor God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.",
+                      reference: "約翰福音 3:16", blank: args.contains("--blank"))
     if args.contains("--long") { slide.text = String(repeating: "神愛世人，凡信他的必得永生。", count: 15) }
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4,
                                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
@@ -164,6 +163,9 @@ final class Projector {
         window.isReleasedWhenClosed = false
         window.backgroundColor = .black
         window.level = .screenSaver
+        // No zoom-in/out: the audience sees verses appear and disappear at
+        // once, and the frame is the display's from the first frame.
+        window.animationBehavior = .none
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         let view = AudienceView(frame: NSRect(origin: .zero, size: screen.frame.size))
         view.slide = slide
@@ -192,6 +194,7 @@ final class Projector {
                 }
             }
             placedIndex = index
+            if let selfTest { selfTest.after(self) }
             status("投影中：螢幕 \(index) · \(name) · \(w)×\(h)\(slide.blank ? "（黑屏）" : "")")
         }
     }
@@ -205,6 +208,40 @@ if !headless {
     // No Dock icon or menu bar; never steals activation from the reader.
     NSApp.setActivationPolicy(.accessory)
 }
+/// Live-window check for machines where the test runner may not capture the
+/// screen or synthesise input (macOS privacy permissions). Only active when
+/// OMARCHY_BIBLE_PROJECTOR_SELFTEST names a directory: after each shown state
+/// it saves the window's own pixels there, and once feeds the window real
+/// key-down events so `@key` forwarding runs through the same path a remote
+/// uses. Never set by the reader.
+final class SelfTest {
+    let directory: String
+    var shot = 0, keysSent = false
+    init?(_ value: String?) { guard let value, !value.isEmpty else { return nil }; directory = value }
+    func after(_ projector: Projector) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
+            guard let window = projector.window, let view = projector.view, window.isVisible else { return }
+            shot += 1
+            if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                let path = "\(directory)/live-\(shot).png"
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+                FileHandle.standardError.write("selftest: \(path) \(Int(window.frame.width))x\(Int(window.frame.height)) level \(window.level.rawValue)\n".data(using: .utf8)!)
+            }
+            guard !keysSent else { return }
+            keysSent = true
+            for code: UInt16 in [124, 123, 11, 49, 116] {
+                if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                windowNumber: window.windowNumber, context: nil, characters: "",
+                                                charactersIgnoringModifiers: "", isARepeat: false, keyCode: code) {
+                    window.makeFirstResponder(view)
+                    window.sendEvent(event)
+                }
+            }
+        }
+    }
+}
+let selfTest = SelfTest(ProcessInfo.processInfo.environment["OMARCHY_BIBLE_PROJECTOR_SELFTEST"])
 let projector = Projector(headless: headless)
 var input = Data()
 FileHandle.standardInput.readabilityHandler = { handle in
