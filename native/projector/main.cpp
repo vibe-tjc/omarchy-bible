@@ -34,7 +34,17 @@ public:
         setWindowTitle(QStringLiteral("聖經 · 投影"));
         setWindowFlag(Qt::FramelessWindowHint);
         setAttribute(Qt::WA_OpaquePaintEvent);
-        QObject::connect(qApp, &QGuiApplication::screenAdded, this, [this] { apply(state); });
+        // The audience never sees a pointer, and the operator keeps focus on
+        // the control desk (the compositor may still decide otherwise).
+        setCursor(Qt::BlankCursor);
+        setAttribute(Qt::WA_ShowWithoutActivating);
+        setWindowFlag(Qt::WindowDoesNotAcceptFocus);
+        // A just-connected output is announced before the compositor can
+        // place a fullscreen window on it; placing at once lands on the
+        // operator's screen. Give the output a moment first.
+        QObject::connect(qApp, &QGuiApplication::screenAdded, this, [this] {
+            QTimer::singleShot(800, this, [this] { apply(state); });
+        });
         QObject::connect(qApp, &QGuiApplication::screenRemoved, this, [this](QScreen *screen) {
             if (screen == output) { output = nullptr; hide(); }
             // Re-evaluate after Qt has updated its screen list.
@@ -66,7 +76,11 @@ public:
         if (text.size()>16000 || reference.size()>2048) { hide(); status(QStringLiteral("投影資料過長")); return; }
         blank=state.value("blank").toBool();
         if (screen!=output || !isVisible()) {
-            hide(); winId(); windowHandle()->setScreen(screen);
+            // A fresh native window per placement: on Wayland a re-shown
+            // surface can land on the focused (operator's) output instead of
+            // the requested one, e.g. after the display is reconnected.
+            hide(); if (windowHandle()) windowHandle()->destroy();
+            winId(); windowHandle()->setScreen(screen);
             setGeometry(screen->geometry()); output=screen; showFullScreen();
         }
         update();
@@ -107,8 +121,19 @@ protected:
             Qt::AlignHCenter|Qt::AlignVCenter, reference);
     }
     void keyPressEvent(QKeyEvent *e) override {
-        if (e->key()==Qt::Key_Escape) { status(QStringLiteral("投影視窗已關閉")); qApp->quit(); }
-        else QWidget::keyPressEvent(e);
+        // If the compositor focused this window anyway, a presentation
+        // remote still works: its keys go back to the controller.
+        switch (e->key()) {
+        case Qt::Key_Right: case Qt::Key_PageDown: case Qt::Key_Down: case Qt::Key_Space:
+            status(QStringLiteral("@key next")); break;
+        case Qt::Key_Left: case Qt::Key_PageUp: case Qt::Key_Up:
+            status(QStringLiteral("@key prev")); break;
+        case Qt::Key_B: case Qt::Key_Period:
+            status(QStringLiteral("@key blank")); break;
+        case Qt::Key_Escape:
+            status(QStringLiteral("投影視窗已關閉")); qApp->quit(); break;
+        default: QWidget::keyPressEvent(e);
+        }
     }
     void closeEvent(QCloseEvent *e) override { e->accept(); qApp->quit(); }
 };

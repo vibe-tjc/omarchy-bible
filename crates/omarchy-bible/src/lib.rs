@@ -68,8 +68,13 @@ pub fn App(props: AppProps) -> impl IntoElement {
         }
     });
     set_interval(Duration::from_millis(250), move || {
-        if let Some(status) = store.output.with(|o| o.status()) {
-            store.projection_status.set(status);
+        for event in store.output.with(|o| o.events()) {
+            match event.as_str() {
+                "@key next" => store.projection_advance(1),
+                "@key prev" => store.projection_advance(-1),
+                "@key blank" => store.projection_blank(),
+                _ => store.projection_status.set(event),
+            }
         }
     });
     follow_theme(store);
@@ -188,7 +193,7 @@ fn shortcuts(store: Store) {
 }
 
 /// Debug builds only: `OMARCHY_BIBLE_SCREEN` opens a screen at start
-/// (`books`, `chapters`, `search`, `settings`, `select`, `hebrew`, `projection`, `projection-live`, or a
+/// (`books`, `chapters`, `search`, `settings`, `select`, `hebrew`, `projection`, `projection-live`, `projection-auto`, or a
 /// reference such as `約3:16`), for screenshots of each screen.
 #[cfg(debug_assertions)]
 fn debug_start_screen(store: Store) {
@@ -205,6 +210,11 @@ fn debug_start_screen(store: Store) {
         "projection-live" => {
             crate::pages::projection::open(store);
             store.projection_screen(1);
+            store.start_projection();
+        }
+        // Projects to an external display chosen automatically.
+        "projection-auto" => {
+            crate::pages::projection::open(store);
             store.start_projection();
         }
         "select" => {

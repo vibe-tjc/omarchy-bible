@@ -240,8 +240,13 @@ impl NativeOutput {
             .write_all(&json)
             .map_err(|e| e.to_string())
     }
-    pub fn status(&mut self) -> Option<String> {
-        self.events.as_ref().and_then(|rx| rx.try_iter().last())
+    /// Everything the helper reported since the last call, in order:
+    /// status lines, and `@key …` lines for keys pressed on its window.
+    pub fn events(&mut self) -> Vec<String> {
+        self.events
+            .as_ref()
+            .map(|rx| rx.try_iter().collect())
+            .unwrap_or_default()
     }
 }
 #[cfg(not(target_os = "android"))]
@@ -264,8 +269,8 @@ impl NativeOutput {
         nsh_core::storage::Storage::set_item("projection", json)
             .map_err(|_| "投影資料超過 app 儲存空間".into())
     }
-    pub fn status(&mut self) -> Option<String> {
-        None
+    pub fn events(&mut self) -> Vec<String> {
+        Vec::new()
     }
 }
 
