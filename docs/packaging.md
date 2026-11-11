@@ -19,7 +19,7 @@ yay -S omarchy-bible-bin
 
 Linux：把 `omarchy-bible` 與 `omarchy-bible-projector` 放到 `PATH` 的同一個目錄。`.desktop` 只給 Linux 包裝用。macOS 優先用 DMG 裝 `.app`；tar.gz 也打包整個 `.app`，投影 helper 與 reader 放在一起。
 
-建置桌面投影 helper 需 Qt 6 開發工具：Arch `qt6-base`；Ubuntu `qt6-base-dev qt6-base-dev-tools qmake6`；macOS 只需 Xcode（或 Command Line Tools）的 `swiftc`，helper 是 AppKit，不需 Homebrew 套件。先 `cargo build --release -p omarchy-bible`，再 `bash packaging/scripts/build-projector.sh release`，最後執行打包腳本。Android 的特殊 host 打包方式見 [projection.md](projection.md)。
+建置桌面投影 helper：Linux 是 GTK 4（Rust gtk4-rs，`native/projector/gtk/`），與 reader 用同一套 GTK 4 開發套件，不需額外系統依賴：Arch `gtk4`、`pkgconf`；Ubuntu `libgtk-4-dev pkg-config`（CI 另裝 GStreamer 與 clang，見 [ci.yml](../.github/workflows/ci.yml)）；macOS 只需 Xcode（或 Command Line Tools）的 `swiftc`，helper 是 AppKit，不需 Homebrew 套件。先 `cargo build --release -p omarchy-bible`，再 `bash packaging/scripts/build-projector.sh release`，最後執行打包腳本。Android 的特殊 host 打包方式見 [projection.md](projection.md)。
 
 ## 發一版
 
@@ -75,6 +75,6 @@ bash packaging/scripts/package-macos.sh 0.3.0 target/release/omarchy-bible
 
 ## 執行期依賴
 
-Linux：`gtk4`（4.14 以上）、`gstreamer`、`gst-plugins-base-libs`、`gst-plugins-bad-libs`、`vulkan-icd-loader`、`qt6-base`（投影 helper）。中文字型建議 `noto-fonts-cjk`（optdepends）。視窗的 Wayland app id（與 `.desktop` 的 `StartupWMClass`）是 `io.github.vibe_tjc.OmarchyBible`，寫 Hyprland 視窗規則時用這個。
+Linux：`gtk4`（4.14 以上）、`gstreamer`、`gst-plugins-base-libs`、`gst-plugins-bad-libs`、`vulkan-icd-loader`。投影 helper 同樣只用 `gtk4`，不需 Qt。中文字型建議 `noto-fonts-cjk`（optdepends）。視窗的 Wayland app id（與 `.desktop` 的 `StartupWMClass`）是 `io.github.vibe_tjc.OmarchyBible`，寫 Hyprland 視窗規則時用這個。
 
 macOS 14 以上：系統已有 PingFang TC / Songti TC / Heiti TC；無需額外 Homebrew 套件即可編。設定檔在 `~/Library/Application Support/omarchy-bible/settings.json`。

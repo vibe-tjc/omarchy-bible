@@ -56,7 +56,7 @@ cargo run -p omarchy-bible
 **投影（桌面與 Android）**
 - 「投影」（手機在「⋯」選單）可將目前單節或選取的多節送到獨立外接顯示；預設每張一節，多節可切換開啟
 - 支援切頁、黑屏、停止，以及依外接螢幕長寬比調整字級與安全邊界
-- 桌面需附帶的 Qt helper；Android 需系統支援的外接顯示，不是任意裝置都能無線投放
+- 桌面需附帶的原生投影 helper（Linux 為 GTK 4、macOS 為 AppKit，皆不需 Qt）；Android 需系統支援的外接顯示，不是任意裝置都能無線投放
 - 建置與硬體限制見 [投影說明](docs/projection.md)
 
 **希伯來文**

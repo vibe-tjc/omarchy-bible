@@ -41,7 +41,7 @@ cargo run -p omarchy-bible
 
 兩個 binary 必須在同一目錄：`omarchy-bible`、`omarchy-bible-projector`。原始碼開發也能用 `OMARCHY_BIBLE_PROJECTOR=/完整路徑/omarchy-bible-projector` 指定。
 
-自動模式選擇非系統主螢幕；只接一台時不會搶佔它。可明確選螢幕 0 預覽，Linux 上螢幕 0 是 compositor 列出的第一個輸出（通常即操作台），其他編號按 GDK 的 monitor list 排序，狀態列回報實際螢幕名稱與尺寸。操作台若不在系統主螢幕，請手動選擇正確目標。
+自動模式把螢幕 0 視為操作台、投到第一個其他螢幕；只接一台時不會搶佔它。可明確選螢幕 0 預覽。兩個平台都是原生 helper：Linux 是 GTK 4（`native/projector/gtk/`），螢幕 0 是 compositor／GDK monitor list 的第一個輸出（通常即操作台），其他編號依該清單排序；macOS 是 AppKit（`native/projector/macos/`），螢幕 0 是有選單列的主螢幕。狀態列回報實際螢幕名稱與尺寸。操作台若不在螢幕 0，請手動選擇正確目標。
 
 Linux 的 Wayland 視窗位置受 compositor 管理，`gtk_window_fullscreen_on_monitor` 是請求，最終仍依 compositor 政策；必要時手動把投影視窗移至目標螢幕。macOS 的 helper（`native/projector/macos/main.swift`）用 AppKit：每次放置建立一個無邊框、覆蓋整個螢幕（含選單列與 Dock）的視窗，不啟用 helper、不搶操作台焦點，不顯示游標，也沒有開關動畫；螢幕 0 是有選單列的主螢幕，自動模式取第一個其他螢幕。螢幕設定變更（拔插、改解析度）後約 1 秒重新放置。已在 macOS 26 單螢幕上測過螢幕 0 預覽、雙版本對照、翻頁、黑屏、自動模式「找不到外接螢幕」與 EOF 結束；實體外接顯示的拔插仍需實機驗證。
 
