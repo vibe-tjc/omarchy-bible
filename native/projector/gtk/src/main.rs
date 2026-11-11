@@ -25,6 +25,24 @@ mod linux {
     const NO_SCREEN: &str = "找不到外接螢幕；請連接螢幕，或明確選擇螢幕 0 預覽";
     const MAX_INPUT: usize = 262_144;
 
+    /// `OMARCHY_BIBLE_PROJECTOR_DEBUG=1`: placement trace on stderr (never
+    /// slide text), for diagnosing compositor timing.
+    fn trace(message: impl FnOnce() -> String) {
+        thread_local! {
+            static START: Option<std::time::Instant> =
+                std::env::var_os("OMARCHY_BIBLE_PROJECTOR_DEBUG").map(|_| std::time::Instant::now());
+        }
+        START.with(|start| {
+            if let Some(start) = start {
+                eprintln!(
+                    "[projector {:>7} ms] {}",
+                    start.elapsed().as_millis(),
+                    message()
+                );
+            }
+        });
+    }
+
     fn status(line: &str) {
         let mut out = std::io::stdout().lock();
         let _ = writeln!(out, "{line}");
@@ -266,6 +284,22 @@ mod linux {
         keys.connect_key_pressed(|_, keyval, _, _| key(keyval));
         window.add_controller(keys);
         window.connect_close_request(|_| quit("投影視窗已關閉"));
+        let target = monitor
+            .connector()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        trace(|| format!("place on {target}"));
+        window.connect_map(|_| trace(|| "mapped".into()));
+        window.connect_realize(|window| {
+            if let Some(surface) = window.surface() {
+                surface.connect_enter_monitor(|_, m| {
+                    trace(|| format!("surface entered {}", m.connector().unwrap_or_default()))
+                });
+                surface.connect_leave_monitor(|_, m| {
+                    trace(|| format!("surface left {}", m.connector().unwrap_or_default()))
+                });
+            }
+        });
         window.fullscreen_on_monitor(&monitor);
         window.present();
         p.output = Some(monitor.clone());
@@ -284,11 +318,13 @@ mod linux {
             let Some((window, _)) = p.window.as_ref().filter(|_| p.generation == generation) else {
                 return;
             };
+            trace(|| "leave fullscreen".into());
             window.unfullscreen();
             let (window, monitor, weak) = (window.clone(), monitor.clone(), Rc::downgrade(&shared));
             glib::timeout_add_local_once(Duration::from_millis(300), move || {
                 let Some(shared) = weak.upgrade() else { return };
                 if shared.borrow().generation == generation {
+                    trace(|| "re-enter fullscreen".into());
                     window.fullscreen_on_monitor(&monitor);
                 }
             });
@@ -298,7 +334,19 @@ mod linux {
     fn apply(shared: &Shared, next: Value) {
         let mut p = shared.borrow_mut();
         p.state = next;
-        match plan(&p.state, p.screens.count()) {
+        let planned = plan(&p.state, p.screens.count());
+        trace(|| {
+            format!(
+                "apply: {} screens, {}",
+                p.screens.count(),
+                match &planned {
+                    Plan::Off => "off".to_string(),
+                    Plan::Fail(m) => format!("fail {m}"),
+                    Plan::Show(i, _) => format!("show on {i}"),
+                }
+            )
+        });
+        match planned {
             Plan::Off => hide(&mut p),
             Plan::Fail(message) => {
                 if message == NO_SCREEN {
@@ -370,6 +418,12 @@ mod linux {
             let weak = Rc::downgrade(&shared);
             model.connect_items_changed(move |model, _, removed, added| {
                 let Some(shared) = weak.upgrade() else { return };
+                trace(|| {
+                    format!(
+                        "monitors changed: -{removed} +{added} = {}",
+                        model.n_items()
+                    )
+                });
                 if removed > 0 {
                     let gone = {
                         let p = shared.borrow();

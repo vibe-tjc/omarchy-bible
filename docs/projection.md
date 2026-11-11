@@ -29,10 +29,11 @@
 
 ## 桌面（Linux／macOS）
 
-NSH 0.4.0 尚未提供多視窗 API。app 自己附帶 Qt 6 audience helper，不修改 NSH 套件；reader 與 helper 使用私有 stdin pipe 傳純文字 JSON。controller 關閉後 pipe EOF 會結束 helper。
+NSH 0.4.0 尚未提供多視窗 API。app 自己附帶 audience helper（Linux：GTK 4，Rust gtk4-rs，`native/projector/gtk/`），不修改 NSH 套件；reader 與 helper 使用私有 stdin pipe 傳純文字 JSON。controller 關閉後 pipe EOF 會結束 helper。
 
 ```bash
-# Arch 編譯需要 qt6-base（qmake6）；macOS：brew install qt
+# Linux：只需 Native Shell 本來就要的 GTK 4 開發套件（Arch：gtk4；Ubuntu：libgtk-4-dev）
+# macOS helper：見 native/projector/macos/
 cargo build -p omarchy-bible
 bash packaging/scripts/build-projector.sh debug
 cargo run -p omarchy-bible
@@ -40,9 +41,9 @@ cargo run -p omarchy-bible
 
 兩個 binary 必須在同一目錄：`omarchy-bible`、`omarchy-bible-projector`。原始碼開發也能用 `OMARCHY_BIBLE_PROJECTOR=/完整路徑/omarchy-bible-projector` 指定。
 
-自動模式選擇非系統主螢幕；只接一台時不會搶佔它。可明確選螢幕 0 預覽，其他編號按 Qt 的 display list 排序，狀態列回報實際螢幕名稱與尺寸。操作台若不在系統主螢幕，請手動選擇正確目標。
+自動模式選擇非系統主螢幕；只接一台時不會搶佔它。可明確選螢幕 0 預覽，Linux 上螢幕 0 是 compositor 列出的第一個輸出（通常即操作台），其他編號按 GDK 的 monitor list 排序，狀態列回報實際螢幕名稱與尺寸。操作台若不在系統主螢幕，請手動選擇正確目標。
 
-Linux 的 Wayland 視窗位置受 compositor 管理，`QWindow::setScreen` 與全螢幕是請求，最終仍依 compositor 政策；必要時手動把投影視窗移至目標螢幕。macOS 的實體外接顯示需另外實機驗證。
+Linux 的 Wayland 視窗位置受 compositor 管理，`gtk_window_fullscreen_on_monitor` 是請求，最終仍依 compositor 政策；必要時手動把投影視窗移至目標螢幕。macOS 的實體外接顯示需另外實機驗證。
 
 拔除目標螢幕後會隱藏／重新選擇仍存在的外接螢幕，不會在自動模式回退主螢幕。重新接上時會等約 2.5 秒、待 compositor 與狀態列都備妥該輸出再放上投影；放好後會離開再進入全螢幕一次，讓 Omarchy 狀態列退到投影下方（直接以全螢幕開啟的視窗不會觸發狀態列的更新）；已用 Hyprland 虛擬螢幕（`hyprctl output create headless`）測過自動選擇、全螢幕、翻頁鍵、黑屏與三次拔插。
 

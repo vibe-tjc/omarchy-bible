@@ -8,8 +8,9 @@ pkgdesc='Local-first bilingual Bible reader for Omarchy (CUV 1919 神版 + KJV)'
 arch=('x86_64')
 url='https://github.com/vibe-tjc/omarchy-bible'
 license=('Apache-2.0')
-# Native Shell renders with GTK 4 and plays media through GStreamer.
-depends=('gtk4' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-bad-libs' 'vulkan-icd-loader' 'qt6-base')
+# Native Shell and the projector helper render with GTK 4; media plays
+# through GStreamer.
+depends=('gtk4' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-bad-libs' 'vulkan-icd-loader')
 optdepends=('noto-fonts-cjk: Traditional Chinese glyphs')
 provides=('omarchy-bible')
 conflicts=('omarchy-bible')

@@ -42,14 +42,14 @@ jobs:
           ref: ${{ steps.meta.outputs.tag }}
 
       # Native Shell's Linux backend is GTK 4 (4.14+, Ubuntu 24.04) with
-      # GStreamer; its QuickJS needs libclang for bindgen.
+      # GStreamer; its QuickJS needs libclang for bindgen. The projector
+      # helper uses the same GTK 4 libraries.
       - name: System libraries for Native Shell
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libgtk-4-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-bad1.0-dev clang libclang-dev pkg-config \
-            qt6-base-dev qt6-base-dev-tools qmake6
+            libgstreamer-plugins-bad1.0-dev clang libclang-dev pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
 
