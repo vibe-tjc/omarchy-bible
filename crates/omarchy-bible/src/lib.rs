@@ -121,7 +121,8 @@ fn follow_theme(store: Store) {
     });
 }
 
-/// The keyboard: `[` `]` chapters, `/` search, `Escape` back out. Ctrl+Q
+/// The keyboard: `[` `]` chapters, `/` search, `Escape` back out; with
+/// the projection desk open, `←` `→` / PageUp PageDown step and `B` blanks. Ctrl+Q
 /// and Cmd+Q quit through the platform, which keeps them.
 fn shortcuts(store: Store) {
     let reading = move || {
@@ -136,6 +137,28 @@ fn shortcuts(store: Store) {
     on_key("]", move |_| {
         if reading() {
             store.next_chapter();
+        }
+    });
+    // While the projection desk is open, the keys a presentation remote
+    // sends step through the projection, and B blanks the audience screen.
+    let projecting = move || store.overlay.get_untracked() == Overlay::Projection;
+    for key in ["right", "pagedown"] {
+        on_key(key, move |_| {
+            if projecting() {
+                store.projection_advance(1);
+            }
+        });
+    }
+    for key in ["left", "pageup"] {
+        on_key(key, move |_| {
+            if projecting() {
+                store.projection_advance(-1);
+            }
+        });
+    }
+    on_key("b", move |_| {
+        if projecting() && store.projection.with_untracked(|p| p.active) {
+            store.projection_blank();
         }
     });
     on_key("/", move |_| {
@@ -165,7 +188,7 @@ fn shortcuts(store: Store) {
 }
 
 /// Debug builds only: `OMARCHY_BIBLE_SCREEN` opens a screen at start
-/// (`books`, `chapters`, `search`, `settings`, `select`, `hebrew`, or a
+/// (`books`, `chapters`, `search`, `settings`, `select`, `hebrew`, `projection`, `projection-live`, or a
 /// reference such as `約3:16`), for screenshots of each screen.
 #[cfg(debug_assertions)]
 fn debug_start_screen(store: Store) {
@@ -177,6 +200,13 @@ fn debug_start_screen(store: Store) {
         "chapters" => store.open_overlay(Overlay::ChapterPicker),
         "search" => store.open_overlay(Overlay::Search),
         "settings" => store.open_overlay(Overlay::Settings),
+        "projection" => crate::pages::projection::open(store),
+        // Projects to display 0 (a single-monitor preview) right away.
+        "projection-live" => {
+            crate::pages::projection::open(store);
+            store.projection_screen(1);
+            store.start_projection();
+        }
         "select" => {
             store.toggle_select_mode();
             store.tap_verse(1, bible_core::TranslationId::Cuv1919);

@@ -690,6 +690,19 @@ impl Store {
         }
         self.prepare_projection(false);
     }
+    /// The remote's next/previous: the next page of a long slide set while
+    /// there is one, otherwise the neighbouring verse.
+    pub fn projection_advance(&self, delta: i32) {
+        let within = self.projection.with_untracked(|p| {
+            let to = p.index as i64 + delta as i64;
+            (0..p.slides.len() as i64).contains(&to)
+        });
+        if within {
+            self.projection_step(delta);
+        } else {
+            self.projection_verse(delta);
+        }
+    }
     pub fn projection_blank(&self) {
         self.projection.update(|p| {
             p.blank = !p.blank;
@@ -697,11 +710,22 @@ impl Store {
         });
     }
     pub fn projection_multiple(&self) {
+        let on = self.projection.with_untracked(|p| !p.multiple);
+        self.set_projection_multiple(on);
+    }
+    pub fn set_projection_multiple(&self, on: bool) {
+        if self.projection.with_untracked(|p| p.multiple) == on {
+            return;
+        }
         self.projection.update(|p| {
-            p.multiple = !p.multiple;
+            p.multiple = on;
             p.revision += 1;
         });
         self.prepare_projection(self.projection_chapter.get_untracked());
+    }
+    /// Whether the slides are the explicit whole chapter (整章).
+    pub fn projection_whole_chapter(&self) -> bool {
+        self.projection_chapter.get()
     }
     pub fn projection_screen(&self, delta: i32) {
         self.projection.update(|p| {
