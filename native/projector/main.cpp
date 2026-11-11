@@ -82,6 +82,17 @@ public:
             hide(); if (windowHandle()) windowHandle()->destroy();
             winId(); windowHandle()->setScreen(screen);
             setGeometry(screen->geometry()); output=screen; showFullScreen();
+            // Omarchy's bar fades out under fullscreen only when it sees a
+            // fullscreen change; a window mapped fullscreen sends none, so
+            // the bar stays drawn over the verses. Leave and re-enter
+            // fullscreen once mapped to send it.
+            QTimer::singleShot(1000, this, [this, screen] {
+                if (!isVisible() || output!=screen) return;
+                showNormal();
+                QTimer::singleShot(300, this, [this, screen] {
+                    if (isVisible() && output==screen) showFullScreen();
+                });
+            });
         }
         update();
         status(QStringLiteral("投影中：螢幕 %1 · %2 · %3×%4%5")
