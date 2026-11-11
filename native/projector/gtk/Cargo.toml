@@ -1,0 +1,23 @@
+[package]
+name = "omarchy-bible-projector"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Linux audience output for Omarchy Bible (GTK 4)"
+publish = false
+
+# Built only for Linux. build-projector.sh copies the binary beside the reader
+# as `omarchy-bible-projector`; the distinct cargo name keeps a macOS cargo
+# build from overwriting the Swift helper in target/.
+[[bin]]
+name = "omarchy-bible-projector-gtk"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Already in the graph through Native Shell's GTK 4 backend: no new crates.
+gtk4 = "0.11"
+pangocairo = "0.22"
+cairo-rs = { version = "0.22", features = ["png"] }
+serde_json.workspace = true
+futures-channel = "0.3"
+futures-util = { version = "0.3", default-features = false }

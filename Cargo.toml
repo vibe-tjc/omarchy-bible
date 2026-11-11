@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/bible-core",
     "crates/omarchy-bible",
+    "native/projector/gtk",
 ]
 
 [workspace.package]

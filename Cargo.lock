@@ -2069,6 +2069,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "omarchy-bible-projector"
+version = "0.3.0"
+dependencies = [
+ "cairo-rs",
+ "futures-channel",
+ "futures-util",
+ "gtk4",
+ "pangocairo",
+ "serde_json",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

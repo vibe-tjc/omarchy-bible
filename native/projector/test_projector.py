@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Exercise the real Qt helper without opening windows on the user's desktop.
-Uses only Python's standard library. Checks pipe lifecycle and rendered fit on
-16:9, 4:3, ultrawide, and portrait surfaces. PNGs are temporary test artifacts.
+"""Exercise the real native helper (GTK 4 on Linux, AppKit on macOS) without
+opening windows on the user's desktop. Uses only Python's standard library.
+Checks pipe lifecycle and rendered fit on 16:9, 4:3, ultrawide, and portrait
+surfaces. PNGs are temporary test artifacts.
+
+`--render-test` paints with the helper's own drawing code into an image, and
+OMARCHY_BIBLE_PROJECTOR_HEADLESS runs the real pipe and screen-choice logic
+against one simulated display, so neither needs a display server (CI).
 """
 import json
 import os
@@ -14,7 +19,7 @@ import tempfile
 import time
 
 exe = str(Path(sys.argv[1]).resolve())
-env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_SCALE_FACTOR="1")
+env = dict(os.environ, OMARCHY_BIBLE_PROJECTOR_HEADLESS="1")
 with tempfile.TemporaryDirectory(prefix="bible-projector-test-") as temp:
     for width, height in [(1920,1080),(1024,768),(2560,1080),(1080,1920),(640,480)]:
         path=Path(temp)/f"{width}x{height}.png"
@@ -49,17 +54,21 @@ with tempfile.TemporaryDirectory(prefix="bible-projector-test-") as temp:
                 raise AssertionError(received.decode(errors="replace"))
             finally: selector.close()
         expect("準備")
-        command()  # offscreen has one display: never auto-take the controller.
+        command()  # headless has one display: never auto-take the controller.
         expect("找不到外接螢幕")
         command(screen=0)
         expect("投影中")
         command(screen=0,blank=True)
         expect("黑屏")
+        command(screen=0,slides=[dict(reference="r",text="x"*16001)])
+        expect("投影資料過長")
+        command(screen=0,index=5)
+        expect("沒有可投影的經文")
         command(screen=999)
         expect("找不到外接螢幕")
         command(active=False)
         process.stdin.close()
         assert process.wait(timeout=5)==0, "helper must quit when its controller disappears"
-        print("pipe: explicit preview, no automatic fallback, black screen, invalid display, EOF cleanup")
+        print("pipe: explicit preview, no automatic fallback, black screen, limits, invalid display, EOF cleanup")
     finally:
         if process.poll() is None: process.kill(); process.wait()
